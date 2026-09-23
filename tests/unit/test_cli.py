@@ -216,6 +216,20 @@ def test_explain_prints_human_readable_review_and_audits_without_starting(
     assert records[0]["phase"] == "recommendation"
 
 
+def test_help_scopes_show_request_to_explain(capsys) -> None:
+    with pytest.raises(SystemExit) as error:
+        main(["explain", "--help"])
+
+    assert error.value.code == 0
+    assert "--show-request" in capsys.readouterr().out
+
+    with pytest.raises(SystemExit) as error:
+        main(["spawn", "--help"])
+
+    assert error.value.code == 0
+    assert "--show-request" not in capsys.readouterr().out
+
+
 def test_explain_show_request_prints_the_state_and_questions_sent_to_jev(
     tmp_path: Path,
 ) -> None:
