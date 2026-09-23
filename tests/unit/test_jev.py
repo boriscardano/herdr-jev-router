@@ -7,7 +7,7 @@ from collections.abc import Iterator, Mapping
 import pytest
 from httpx2 import ConnectError, MockTransport, ReadTimeout, Request, Response
 
-from herdr_jev_router.jev import JevError, route_with_jev
+from herdr_jev_router.jev import JevError, build_jev_request, route_with_jev
 from herdr_jev_router.models import (
     CapacityState,
     CodexModel,
@@ -112,6 +112,38 @@ def call_with_transport(transport: MockTransport, **changes: object):
     return asyncio.run(
         route_with_jev(**kwargs)  # type: ignore[arg-type]
     )
+
+
+def test_build_jev_request_matches_the_body_sent_to_jev() -> None:
+    requests: list[Request] = []
+
+    def handler(request: Request) -> Response:
+        requests.append(request)
+        return response(valid_response())
+
+    call_with_transport(MockTransport(handler))
+    sent = json.loads(requests[0].content)
+
+    built = build_jev_request(
+        task="Review a bounded change.",
+        role="reviewer",
+        constraints={
+            "read_only": True,
+            "worktree": False,
+            "network_required": False,
+        },
+        capacities=all_capacities(),
+    )
+
+    assert built.state == sent["state"]
+    assert {
+        answer_id: {
+            "type": question.type,
+            "instructions": question.instructions,
+            "criteria": dict(question.criteria),
+        }
+        for answer_id, question in built.questions.items()
+    } == sent["questions"]
 
 
 def test_one_system_one_call_contains_six_typed_questions() -> None:

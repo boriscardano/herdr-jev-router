@@ -24,7 +24,7 @@ from herdr_jev_router.harness import (
     HarnessConfigurationError,
     harness_availability,
 )
-from herdr_jev_router.jev import route_with_jev
+from herdr_jev_router.jev import JevRequest, build_jev_request, route_with_jev
 from herdr_jev_router.models import (
     CapacityState,
     Effort,
@@ -215,6 +215,14 @@ class _SpawnResult:
     name: str
 
 
+@dataclass(frozen=True, slots=True)
+class _ExplainResult:
+    """Bundle one explain recommendation with its optional Jev request."""
+
+    recommendation: RecommendationResult
+    request: JevRequest | None
+
+
 def _parser(environment: Mapping[str, str]) -> argparse.ArgumentParser:
     state_default = environment.get("HERDR_JEV_ROUTER_STATE_DIR")
     if state_default is None:
@@ -291,6 +299,12 @@ def _parser(environment: Mapping[str, str]) -> argparse.ArgumentParser:
             type=Path,
             help="owner-only audit JSONL path (default: <state-dir>/routing.jsonl)",
         )
+    # Only `explain` prints the request; `spawn` must reject this flag.
+    explain_parser.add_argument(
+        "--show-request",
+        action="store_true",
+        help="print the exact Jev request JSON before the review",
+    )
     for name, description in (
         ("usage", "Show normalized current provider capacity."),
         ("doctor", "Validate the local router installation."),
@@ -765,14 +779,17 @@ def _explain_command(
     clock: Clock,
     request_id: str,
     availability: HarnessAvailability,
-) -> RecommendationResult:
+) -> _ExplainResult:
     """Route one advisory review request without starting an agent."""
 
-    return _recommend_decision(
+    task = _task_text(arguments.task)
+    role = _role(arguments.role)
+    constraints = _constraints(arguments)
+    recommendation = _recommend_decision(
         request_id=request_id,
-        task=_task_text(arguments.task),
-        role=_role(arguments.role),
-        constraints=_constraints(arguments),
+        task=task,
+        role=role,
+        constraints=constraints,
         state_dir=arguments.state_dir,
         audit_path=arguments.audit_path,
         environment=environment,
@@ -780,6 +797,19 @@ def _explain_command(
         clock=clock,
         availability=availability,
     )
+    # Rebuild from the same snapshot `recommend` sent to Jev, so the printed
+    # request and the wire request are built by the same function.
+    request = (
+        build_jev_request(
+            task=task,
+            role=role,
+            constraints=constraints,
+            capacities=recommendation.capacities,
+        )
+        if arguments.show_request
+        else None
+    )
+    return _ExplainResult(recommendation, request)
 
 
 def _spawn_identifier(value: object) -> str:
@@ -960,12 +990,15 @@ def _bounded_string(value: object, *, maximum: int) -> str:
 
 def _write_explain(
     output: TextIO,
-    result: RecommendationResult,
+    result: _ExplainResult,
     availability: HarnessAvailability,
 ) -> None:
     """Print one human-readable recommendation without starting anything."""
 
-    decision = result.recommended
+    if result.request is not None:
+        _write_jev_request(output, result.request)
+    recommendation = result.recommendation
+    decision = recommendation.recommended
     lines = [
         f"recommended harness: {decision.harness.value}",
         f"selected model: {decision.model.value}",
@@ -973,9 +1006,34 @@ def _write_explain(
     ]
     lines.extend(
         f"capacity {capacity.harness.value}: {_capacity_label(capacity, availability)}"
-        for capacity in result.capacities
+        for capacity in recommendation.capacities
     )
     _write_output(output, "\n".join(lines) + "\n")
+
+
+def _write_jev_request(output: TextIO, request: JevRequest) -> None:
+    """Print the exact Jev request JSON before the human-readable review."""
+
+    _write_output(
+        output,
+        json.dumps(_jev_request_document(request), allow_nan=False, indent=2) + "\n\n",
+    )
+
+
+def _jev_request_document(request: JevRequest) -> dict[str, object]:
+    """Serialize one Jev request to plain JSON: state plus typed questions."""
+
+    return {
+        "state": request.state,
+        "questions": {
+            answer_id: {
+                "type": question.type,
+                "instructions": question.instructions,
+                "criteria": dict(question.criteria),
+            }
+            for answer_id, question in request.questions.items()
+        },
+    }
 
 
 def _capacity_label(

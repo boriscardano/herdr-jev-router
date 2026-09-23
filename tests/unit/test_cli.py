@@ -11,7 +11,8 @@ from httpx2 import MockTransport, Request, Response
 import herdr_jev_router.cli as cli_module
 import herdr_jev_router.router as router_module
 from herdr_jev_router.cli import main
-from herdr_jev_router.jev import JevRoutingResult, route_with_jev
+from herdr_jev_router.jev import JevError, JevRoutingResult, route_with_jev
+from herdr_jev_router.policy import route_eligible
 from herdr_jev_router.quota import QuotaSnapshot, QuotaWindow, write_cache
 
 _OPT_IN_ENVIRONMENT = {
@@ -134,6 +135,13 @@ def invoke_explain(
     return code, stdout.getvalue()
 
 
+def split_show_request(output: str) -> tuple[dict, str]:
+    """Split `--show-request` output into its JSON document and review lines."""
+
+    index = output.index("recommended harness:")
+    return json.loads(output[:index]), output[index:]
+
+
 def test_help_documents_safe_configuration_defaults(capsys) -> None:
     with pytest.raises(SystemExit) as error:
         main(["spawn", "--help"])
@@ -206,6 +214,107 @@ def test_explain_prints_human_readable_review_and_audits_without_starting(
     records = [json.loads(line) for line in audit.splitlines()]
     assert len(records) == 1
     assert records[0]["phase"] == "recommendation"
+
+
+def test_help_scopes_show_request_to_explain(capsys) -> None:
+    with pytest.raises(SystemExit) as error:
+        main(["explain", "--help"])
+
+    assert error.value.code == 0
+    assert "--show-request" in capsys.readouterr().out
+
+    with pytest.raises(SystemExit) as error:
+        main(["spawn", "--help"])
+
+    assert error.value.code == 0
+    assert "--show-request" not in capsys.readouterr().out
+
+
+def test_explain_show_request_prints_the_state_and_questions_sent_to_jev(
+    tmp_path: Path,
+) -> None:
+    state_dir = tmp_path / "state"
+    cache(
+        state_dir / "claude-quota.json",
+        provider="claude",
+        source="claude_status_line",
+        remaining=50,
+        now=1_000,
+    )
+    cache(
+        state_dir / "codex-quota.json",
+        provider="codex",
+        source="codex_app_server",
+        remaining=90,
+        now=1_000,
+    )
+    calls: list[dict[str, object]] = []
+
+    async def fake_jev(**kwargs: object) -> JevRoutingResult:
+        calls.append(kwargs)
+        return jev_result()
+
+    code, output = invoke_explain(
+        tmp_path,
+        fake_jev,
+        extra=("--show-request",),
+        environ={"TYPESAFE_API_KEY": "SENTINEL_TYPESAFE_KEY"},
+    )
+
+    assert code == 0
+    document, review = split_show_request(output)
+    assert set(document) == {"state", "questions"}
+
+    recorded = calls[0]
+    state = document["state"]
+    assert state["task"] == recorded["task"] == "Review the authentication change."
+    assert state["role"] == recorded["role"] == "worker"
+    assert state["constraints"] == dict(recorded["constraints"])
+    eligible = route_eligible(tuple(recorded["capacities"]))
+    assert set(state["capacity"]) == {capacity.harness.value for capacity in eligible}
+    assert state["capacity"] == {
+        capacity.harness.value: {
+            "state": capacity.state.value,
+            "penalty": capacity.penalty,
+            "age_hours": capacity.age_hours,
+            **capacity.quota.to_dict(),
+        }
+        for capacity in eligible
+    }
+
+    questions = document["questions"]
+    assert set(questions) == {
+        "harness",
+        "claude_model",
+        "codex_model",
+        "opencode_model",
+        "pi_model",
+        "effort",
+    }
+    for question in questions.values():
+        assert set(question) == {"type", "instructions", "criteria"}
+        assert question["type"] == "choice"
+        assert question["instructions"]
+        assert all(isinstance(option, str) for option in question["criteria"])
+    # The harness criteria are the eligible harnesses named in the state.
+    assert set(questions["harness"]["criteria"]) == set(state["capacity"])
+    assert set(questions["codex_model"]["criteria"]) == {"luna", "terra", "sol"}
+
+    assert review.startswith("recommended harness: codex")
+    assert "SENTINEL_TYPESAFE_KEY" not in output
+    assert "authorization" not in output.lower()
+
+
+def test_explain_without_show_request_prints_no_json(tmp_path: Path) -> None:
+    async def fake_jev(**kwargs: object) -> JevRoutingResult:
+        return jev_result()
+
+    code, output = invoke_explain(tmp_path, fake_jev)
+
+    assert code == 0
+    assert output.startswith("recommended harness: codex")
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(output)
 
 
 def test_explain_rejects_injected_launch_fields(tmp_path: Path) -> None:
@@ -405,6 +514,25 @@ def test_explain_fails_closed_with_router_error_code_and_no_secret(
     }
     assert "SENTINEL" not in output
     assert "SENTINEL" not in (tmp_path / "audit.jsonl").read_text()
+
+
+def test_explain_show_request_prints_nothing_when_jev_fails(tmp_path: Path) -> None:
+    async def failing_jev(**kwargs: object) -> JevRoutingResult:
+        raise JevError("connection", "secret provider body")
+
+    code, output = invoke_explain(
+        tmp_path,
+        failing_jev,
+        extra=("--show-request",),
+        environ={"TYPESAFE_API_KEY": "SENTINEL_TYPESAFE_KEY"},
+    )
+
+    assert code == 1
+    assert json.loads(output)["denial"]["code"] == "jev_failed"
+    assert "recommended harness:" not in output
+    assert "questions" not in output
+    assert "secret provider body" not in output
+    assert "SENTINEL" not in output
 
 
 def test_explain_fails_closed_when_the_audit_write_fails(
@@ -1021,6 +1149,33 @@ def test_explain_removes_critical_codex_and_sends_claude_numbers_to_jev(
     }
     assert record["capacity"]["claude"]["five_hour_remaining_percent"] == 85
     assert record["capacity"]["claude"]["weekly_remaining_percent"] == 35
+
+
+def test_explain_show_request_prints_the_payload_actually_sent_to_jev(
+    tmp_path: Path,
+) -> None:
+    state = tmp_path / "state"
+    _claude_and_critical_codex(state)
+    payloads: list[dict[str, object]] = []
+
+    def handler(request: Request):
+        payloads.append(json.loads(request.content))
+        return _quota_response(("claude",))
+
+    code, output = invoke_explain(
+        tmp_path,
+        partial(route_with_jev, transport=MockTransport(handler)),
+        extra=("--show-request",),
+        command_finder=_advisory_commands,
+    )
+
+    assert code == 0
+    document, _ = split_show_request(output)
+    # The wire request drops critical codex and keeps Claude's quota numbers;
+    # the printed document must be that payload, not a second cache read.
+    assert document["state"] == payloads[0]["state"]
+    assert set(document["state"]["capacity"]) == {"claude"}
+    assert document["questions"] == payloads[0]["questions"]
 
 
 def test_usage_reports_critical_with_the_reason(tmp_path: Path) -> None:
