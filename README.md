@@ -9,7 +9,9 @@ start` still bypasses the router.
 
 [![Herdr Jev Router trailer](docs/assets/trailer.gif)](https://github.com/boriscardano/herdr-jev-router/releases/latest/download/herdr-jev-router-trailer.mp4)
 
-Real run on stock Herdr: asked in plain language to do three things in parallel, a master agent found the skill on its own and every child was routed by Jev. [Watch the full-quality video](https://github.com/boriscardano/herdr-jev-router/releases/latest/download/herdr-jev-router-trailer.mp4).
+Real run on stock Herdr: asked in plain language to do three things in parallel,
+a master agent found the skill on its own and every child was routed by Jev.
+[Watch the full-quality video](https://github.com/boriscardano/herdr-jev-router/releases/latest/download/herdr-jev-router-trailer.mp4).
 
 ## Requirements
 
