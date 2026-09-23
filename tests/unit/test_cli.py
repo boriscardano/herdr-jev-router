@@ -12,7 +12,7 @@ import herdr_jev_router.cli as cli_module
 import herdr_jev_router.router as router_module
 from herdr_jev_router.cli import main
 from herdr_jev_router.jev import JevError, JevRoutingResult, route_with_jev
-from herdr_jev_router.preferences import DEFAULT_PREFERENCES
+from herdr_jev_router.preferences import DEFAULT_PREFERENCES, MAX_PREFERENCES_BYTES
 from herdr_jev_router.quota import QuotaSnapshot, QuotaWindow, write_cache
 
 _OPT_IN_ENVIRONMENT = {
@@ -602,13 +602,21 @@ def test_explain_sends_the_preferences_file_and_never_audits_it(
     assert text not in json.dumps(record)
 
 
+@pytest.mark.parametrize("kind", ["symlink", "oversized", "group_writable"])
 def test_explain_denies_an_unsafe_preferences_file_with_a_stable_code(
-    tmp_path: Path,
+    tmp_path: Path, kind: str
 ) -> None:
     directory = tmp_path / "herdr-jev-router"
     directory.mkdir(mode=0o755)
     directory.chmod(0o755)
-    (directory / "preferences.md").symlink_to(tmp_path / "missing-target")
+    path = directory / "preferences.md"
+    if kind == "symlink":
+        path.symlink_to(tmp_path / "missing-target")
+    elif kind == "oversized":
+        path.write_text("x" * (MAX_PREFERENCES_BYTES + 1), encoding="utf-8")
+    else:
+        path.write_text("steer", encoding="utf-8")
+        directory.chmod(0o775)
     called = False
 
     async def fake_jev(**kwargs: object) -> JevRoutingResult:

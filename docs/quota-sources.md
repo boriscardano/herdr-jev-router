@@ -284,7 +284,7 @@ a test that proves it cannot create orphan processes.
 | Failure | Result | Routing effect |
 | --- | --- | --- |
 | Codex binary missing, app-server timeout, malformed JSONL, RPC error, or shutdown failure | Source error, last valid cache may remain stale | Codex is stale or unknown, never fresh |
-| Codex API-key authentication | Source is not a subscription source | Codex is unknown and ineligible for subscription balancing |
+| Codex API-key authentication | Source is not a subscription source | Codex is unknown; Jev decides with that fact |
 | Codex valid zero remaining or explicit reached state | Valid exhausted window | Codex is `exhausted` and still sent to Jev |
 | Claude status-line feed absent before first API response | No observation | Claude is unknown, not exhausted |
 | Claude individual window absent or expired | Omit only that window | Other valid Claude windows remain usable |
