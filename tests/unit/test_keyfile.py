@@ -168,6 +168,32 @@ def test_oversized_key_file_is_rejected(tmp_path: Path) -> None:
     assert result.problem is not None
 
 
+def test_special_key_file_is_rejected_without_blocking(tmp_path: Path) -> None:
+    config_home = tmp_path / "config"
+    key_path(config_home).parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.mkfifo(key_path(config_home), mode=0o600)
+
+    result = resolve({"XDG_CONFIG_HOME": os.fspath(config_home)})
+
+    assert result.key is None
+    assert result.problem is not None
+
+
+def test_default_key_file_path_uses_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", os.fspath(tmp_path))
+    path = tmp_path / ".config" / "herdr-jev-router" / "key"
+    path.parent.mkdir(mode=0o700, parents=True)
+    path.write_text("file-key", encoding="utf-8")
+    path.chmod(0o600)
+
+    result = resolve({})
+
+    assert result.key == "file-key"
+    assert result.source == "key file"
+
+
 def test_owner_only_parent_directory_is_accepted(tmp_path: Path) -> None:
     config_home = tmp_path / "config"
     write_key(config_home, "file-key")

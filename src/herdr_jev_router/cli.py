@@ -134,6 +134,9 @@ def _read_key_file(path: Path) -> _KeyResolution:
         parent = path.parent.stat()
     except OSError:
         return _KeyResolution(None, None, None)
+    # This parent rule is intentionally looser than quota.owner_only_directory,
+    # which requires mode 0700: the key file only needs a directory that other
+    # users cannot write to, so a conventional 0755 ~/.config is accepted.
     if (
         not stat.S_ISDIR(parent.st_mode)
         or parent.st_uid != os.geteuid()
@@ -147,8 +150,9 @@ def _read_key_file(path: Path) -> _KeyResolution:
     try:
         # O_NOFOLLOW plus fstat close the race between a pre-check and the open,
         # matching the owner-only cache read in quota.py. A symlink fails here
-        # instead of resolving to a file an attacker controls.
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        # instead of resolving to a file an attacker controls. O_NONBLOCK keeps
+        # a FIFO at the path from blocking the open before fstat can reject it.
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except FileNotFoundError:
         return _KeyResolution(None, None, None)
     except OSError:
