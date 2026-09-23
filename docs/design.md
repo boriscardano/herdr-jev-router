@@ -36,6 +36,10 @@ exhausted provider. See [multi-harness-routing.md](multi-harness-routing.md).
 - Only harnesses whose executable is on `PATH` and, for OpenCode and Pi, that
   are opted in can be selected through Jev. A missing or disabled harness is
   forced to `exhausted` before the Jev call.
+- Jev receives the derived 5-hour and weekly remaining quota for every eligible
+  provider. A fresh known window under 10 percent that resets more than 12
+  hours away makes the provider `critical`, and critical providers are removed
+  like exhausted ones unless every remaining provider would be removed.
 - The caller cannot choose a harness, model, effort, executable, working
   directory, or raw launch argument, and the task text is never parsed for them.
 - Every routing decision is written to the audit before any child starts. A
@@ -130,7 +134,6 @@ For every eligible provider, the Jev state carries `state`, `penalty`,
 `weekly_remaining_percent`, and `weekly_resets_in_hours`. The reset values are
 relative hours, not raw timestamps. The harness question tells Jev to prefer
 the provider with more remaining quota when more than one fits.
-
 
 ## Trust boundaries
 

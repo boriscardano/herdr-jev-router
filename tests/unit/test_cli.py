@@ -1099,3 +1099,77 @@ def test_explain_keeps_the_only_critical_provider_with_a_penalty(
     assert record["capacity"]["codex"]["state"] == "critical"
     assert record["capacity"]["codex"]["penalty"] == 2
     assert record["capacity"]["claude"]["state"] == "exhausted"
+
+
+def test_usage_does_not_call_a_stale_near_empty_window_critical(
+    tmp_path: Path,
+) -> None:
+    state = tmp_path / "state"
+    write_cache(
+        state / "codex-quota.json",
+        QuotaSnapshot(
+            provider="codex",
+            source="codex_app_server",
+            observed_at=1_000,
+            captured_at=1_000,
+            windows=(QuotaWindow("primary", 94, 6, 604_800, 1_000 + 38 * 3_600),),
+        ),
+    )
+    stdout = io.StringIO()
+
+    code = main(
+        ["usage", "--state-dir", str(state)],
+        stdout=stdout,
+        environ={},
+        clock=lambda: 1_400.0,
+        command_finder=_advisory_commands,
+    )
+
+    assert code == 0
+    data = json.loads(stdout.getvalue())
+    assert data["codex"]["freshness"] == "stale"
+    assert data["codex"]["state"] != "critical"
+    assert data["codex"]["reason"] is None
+
+
+def test_explain_keeps_a_stale_near_empty_provider_eligible(tmp_path: Path) -> None:
+    state = tmp_path / "state"
+    # Codex was observed at 600 and the test clock is 1000, so it is stale
+    # (refresh floor 300) but still within the 6-hour maximum.
+    write_cache(
+        state / "codex-quota.json",
+        QuotaSnapshot(
+            provider="codex",
+            source="codex_app_server",
+            observed_at=600,
+            captured_at=600,
+            windows=(QuotaWindow("primary", 94, 6, 604_800, 600 + 38 * 3_600),),
+        ),
+    )
+    write_cache(
+        state / "claude-quota.json",
+        QuotaSnapshot(
+            provider="claude",
+            source="claude_status_line",
+            observed_at=1_000,
+            captured_at=1_000,
+            windows=(QuotaWindow("seven_day", 10, 90, 604_800, 1_000 + 160 * 3_600),),
+        ),
+    )
+    payloads: list[dict[str, object]] = []
+
+    def handler(request: Request):
+        payloads.append(json.loads(request.content))
+        return _quota_response(("claude", "codex"))
+
+    code, _ = invoke_explain(
+        tmp_path,
+        partial(route_with_jev, transport=MockTransport(handler)),
+        command_finder=_advisory_commands,
+    )
+
+    assert code == 0
+    capacity = payloads[0]["state"]["capacity"]
+    assert set(capacity) == {"claude", "codex"}
+    assert capacity["codex"]["state"] != "critical"
+    assert capacity["codex"]["weekly_remaining_percent"] is None

@@ -241,6 +241,17 @@ The two sources produce the same minimal shape:
 
 The cache schema must reject unknown top-level fields and invalid percentages. A provider result with no valid window is `unknown`. The capacity layer, not the parser, owns the `surplus`, `on_pace`, `conserve`, `unknown`, `critical`, and `exhausted` labels described in `docs/design.md`.
 
+The capacity layer maps windows to the 5-hour and weekly slots by length, not by
+provider name: about 5 hours and about 7 days, each with a 10 percent
+tolerance. Claude's `five_hour`/`seven_day` and Codex's `primary`/`secondary`
+therefore map the same way. When two windows fall within tolerance of one slot,
+the window whose length is closest to the nominal value wins, and a tie prefers
+the lower remaining percent. A window of any other length is not sent to Jev.
+Claude's `spend_limit` window stores a synthetic length (`resets_at` minus the
+capture time), so a short spend limit can look about 5 hours long. The
+closest-length rule keeps the real `five_hour` window when both are present,
+but a spend limit can fill the 5-hour slot when no real 5-hour window is cached.
+
 ## Cache and freshness behavior
 
 The owner-only state directory contains separate `codex-quota.json`,
