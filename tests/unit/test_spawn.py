@@ -268,6 +268,30 @@ def test_spawn_starts_recommended_agent_and_delivers_task_once(
     assert json.loads(audit.splitlines()[-1])["request_id"] == "spawn-request-1"
 
 
+def test_spawn_rejects_the_explain_only_show_request_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    executable, log = fake_herdr(tmp_path, monkeypatch)
+    called = False
+
+    async def fake_jev(**kwargs: object) -> JevRoutingResult:
+        nonlocal called
+        called = True
+        return jev_result()
+
+    code, output = run_spawn(
+        spawn_argv(extra=("--show-request",)),
+        tmp_path,
+        herdr_command=executable,
+        jev_callable=fake_jev,
+    )
+
+    assert code == 2
+    assert denial(output)["code"] == "invalid_request"
+    assert called is False
+    assert read_log(log) == []
+
+
 def test_spawn_without_pane_splits_the_current_pane_and_uses_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

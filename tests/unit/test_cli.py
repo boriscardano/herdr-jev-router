@@ -12,6 +12,7 @@ import herdr_jev_router.cli as cli_module
 import herdr_jev_router.router as router_module
 from herdr_jev_router.cli import main
 from herdr_jev_router.jev import JevRoutingResult, route_with_jev
+from herdr_jev_router.policy import route_eligible
 from herdr_jev_router.quota import QuotaSnapshot, QuotaWindow, write_cache
 
 _OPT_IN_ENVIRONMENT = {
@@ -134,6 +135,13 @@ def invoke_explain(
     return code, stdout.getvalue()
 
 
+def split_show_request(output: str) -> tuple[dict, str]:
+    """Split `--show-request` output into its JSON document and review lines."""
+
+    index = output.index("recommended harness:")
+    return json.loads(output[:index]), output[index:]
+
+
 def test_help_documents_safe_configuration_defaults(capsys) -> None:
     with pytest.raises(SystemExit) as error:
         main(["spawn", "--help"])
@@ -206,6 +214,93 @@ def test_explain_prints_human_readable_review_and_audits_without_starting(
     records = [json.loads(line) for line in audit.splitlines()]
     assert len(records) == 1
     assert records[0]["phase"] == "recommendation"
+
+
+def test_explain_show_request_prints_the_state_and_questions_sent_to_jev(
+    tmp_path: Path,
+) -> None:
+    state_dir = tmp_path / "state"
+    cache(
+        state_dir / "claude-quota.json",
+        provider="claude",
+        source="claude_status_line",
+        remaining=50,
+        now=1_000,
+    )
+    cache(
+        state_dir / "codex-quota.json",
+        provider="codex",
+        source="codex_app_server",
+        remaining=90,
+        now=1_000,
+    )
+    calls: list[dict[str, object]] = []
+
+    async def fake_jev(**kwargs: object) -> JevRoutingResult:
+        calls.append(kwargs)
+        return jev_result()
+
+    code, output = invoke_explain(
+        tmp_path,
+        fake_jev,
+        extra=("--show-request",),
+        environ={"TYPESAFE_API_KEY": "SENTINEL_TYPESAFE_KEY"},
+    )
+
+    assert code == 0
+    document, review = split_show_request(output)
+    assert set(document) == {"state", "questions"}
+
+    recorded = calls[0]
+    state = document["state"]
+    assert state["task"] == recorded["task"] == "Review the authentication change."
+    assert state["role"] == recorded["role"] == "worker"
+    assert state["constraints"] == dict(recorded["constraints"])
+    eligible = route_eligible(tuple(recorded["capacities"]))
+    assert set(state["capacity"]) == {capacity.harness.value for capacity in eligible}
+    assert state["capacity"] == {
+        capacity.harness.value: {
+            "state": capacity.state.value,
+            "penalty": capacity.penalty,
+            "age_hours": capacity.age_hours,
+            **capacity.quota.to_dict(),
+        }
+        for capacity in eligible
+    }
+
+    questions = document["questions"]
+    assert set(questions) == {
+        "harness",
+        "claude_model",
+        "codex_model",
+        "opencode_model",
+        "pi_model",
+        "effort",
+    }
+    for question in questions.values():
+        assert set(question) == {"type", "instructions", "criteria"}
+        assert question["type"] == "choice"
+        assert question["instructions"]
+        assert all(isinstance(option, str) for option in question["criteria"])
+    # The harness criteria are the eligible harnesses named in the state.
+    assert set(questions["harness"]["criteria"]) == set(state["capacity"])
+    assert set(questions["codex_model"]["criteria"]) == {"luna", "terra", "sol"}
+
+    assert review.startswith("recommended harness: codex")
+    assert "SENTINEL_TYPESAFE_KEY" not in output
+    assert "authorization" not in output.lower()
+
+
+def test_explain_without_show_request_prints_no_json(tmp_path: Path) -> None:
+    async def fake_jev(**kwargs: object) -> JevRoutingResult:
+        return jev_result()
+
+    code, output = invoke_explain(tmp_path, fake_jev)
+
+    assert code == 0
+    assert output.startswith("recommended harness: codex")
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(output)
 
 
 def test_explain_rejects_injected_launch_fields(tmp_path: Path) -> None:

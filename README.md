@@ -171,6 +171,11 @@ Preview the decision without starting anything.
 herdr-jev-router explain 'Review the authentication redesign.' --role reviewer
 ```
 
+Add `--show-request` to `explain` to print the exact JSON sent to Jev before
+the review lines: the `state` object (task, role, constraints, and each
+provider's quota numbers) and the six questions with their instructions and
+criteria. It never prints the key or any header. `spawn` rejects the flag.
+
 `spawn` never accepts a harness, model, effort, or raw launch argument. The
 task may contain newline and tab, but any other C0 or C1 control character, a
 lone surrogate, or text with no visible character after whitespace and Unicode

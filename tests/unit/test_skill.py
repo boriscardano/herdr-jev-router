@@ -36,6 +36,11 @@ _STOCK_HERDR_FLAGS = frozenset(
 )
 
 
+# `explain` may accept a flag that `spawn` must reject. Naming each one here
+# keeps the subset guard below meaningful instead of deleting it.
+_EXPLAIN_ONLY_FLAGS = frozenset({"--show-request"})
+
+
 def _command_parser(command: str) -> argparse.ArgumentParser:
     """Return the router subparser for one command name."""
 
@@ -115,7 +120,12 @@ def test_the_role_list_in_the_skill_matches_the_cli() -> None:
 
 
 def test_explain_flags_are_a_subset_of_spawn_flags() -> None:
-    assert _parser_flags("explain") <= _parser_flags("spawn")
+    assert _parser_flags("explain") - _EXPLAIN_ONLY_FLAGS <= _parser_flags("spawn")
+
+
+def test_every_explain_only_flag_is_really_explain_only() -> None:
+    assert _EXPLAIN_ONLY_FLAGS <= _parser_flags("explain")
+    assert _EXPLAIN_ONLY_FLAGS & _parser_flags("spawn") == set()
 
 
 def test_the_skill_tracks_the_merged_denial_codes() -> None:

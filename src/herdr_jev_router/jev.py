@@ -128,27 +128,23 @@ class JevRoutingResult:
     usage: dict[str, int | None]
 
 
-async def route_with_jev(
+@dataclass(frozen=True, slots=True)
+class JevRequest:
+    """Hold the exact state and six questions sent to one Jev routing call."""
+
+    state: JSONContent
+    questions: dict[str, Choice]
+
+
+def build_jev_request(
     *,
     task: str,
     role: str,
     constraints: Mapping[str, object],
     capacities: Sequence[ProviderCapacity],
-    api_key: str | None = None,
-    transport: AsyncBaseTransport | None = None,
-    timeout: float = 20.0,
-    deadline: float = 25.0,
-) -> JevRoutingResult:
-    """Return one six-answer Jev routing result without launching an agent."""
+) -> JevRequest:
+    """Build the exact state and six Choice questions for one Jev call."""
 
-    if any(
-        not isinstance(value, int | float)
-        or isinstance(value, bool)
-        or not isfinite(value)
-        or value <= 0
-        for value in (timeout, deadline)
-    ):
-        raise JevError("invalid_timeout", "Jev timeouts must be positive and finite")
     raw_constraints = dict(constraints)
     if set(raw_constraints) != _CONSTRAINT_NAMES or any(
         type(value) is not bool for value in raw_constraints.values()
@@ -171,7 +167,7 @@ async def route_with_jev(
         capacity.harness.value: _HARNESS_DESCRIPTIONS[capacity.harness.value]
         for capacity in eligible_capacities
     }
-    questions = {
+    questions: dict[str, Choice] = {
         "harness": Choice(
             instructions=(
                 "Which harness is the better fit for this delegated task? When "
@@ -217,6 +213,36 @@ async def route_with_jev(
             for capacity in eligible_capacities
         },
     }
+    return JevRequest(state=state, questions=questions)
+
+
+async def route_with_jev(
+    *,
+    task: str,
+    role: str,
+    constraints: Mapping[str, object],
+    capacities: Sequence[ProviderCapacity],
+    api_key: str | None = None,
+    transport: AsyncBaseTransport | None = None,
+    timeout: float = 20.0,
+    deadline: float = 25.0,
+) -> JevRoutingResult:
+    """Return one six-answer Jev routing result without launching an agent."""
+
+    if any(
+        not isinstance(value, int | float)
+        or isinstance(value, bool)
+        or not isfinite(value)
+        or value <= 0
+        for value in (timeout, deadline)
+    ):
+        raise JevError("invalid_timeout", "Jev timeouts must be positive and finite")
+    request = build_jev_request(
+        task=task,
+        role=role,
+        constraints=constraints,
+        capacities=capacities,
+    )
 
     try:
         async with async_timeout(deadline):
@@ -228,7 +254,9 @@ async def route_with_jev(
                 timeout=timeout,
                 transport=transport,
             ) as client:
-                response = await client.system_one(state=state, questions=questions)
+                response = await client.system_one(
+                    state=request.state, questions=request.questions
+                )
     except TypeSafeAuthenticationError:
         raise JevError("authentication", "Jev authentication failed") from None
     except TypeSafeUnprocessableEntityError:
@@ -250,13 +278,13 @@ async def route_with_jev(
     except TimeoutError:
         raise JevError("timeout", "Jev request timed out") from None
 
-    if set(response.answers) != set(questions) or any(
+    if set(response.answers) != set(request.questions) or any(
         answer.type != "choice" for answer in response.answers.values()
     ):
         raise JevError("invalid_response", "Jev returned invalid routing answers")
 
     expected_choices = {
-        "harness": frozenset(harness_criteria),
+        "harness": frozenset(request.questions["harness"].criteria),
         "claude_model": frozenset(_CLAUDE_CRITERIA),
         "codex_model": frozenset(_CODEX_CRITERIA),
         "opencode_model": frozenset(_OPENCODE_CRITERIA),
