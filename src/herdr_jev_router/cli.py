@@ -10,6 +10,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import unicodedata
 import uuid
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -578,6 +579,21 @@ def _file_status(path: Path) -> str:
     )
 
 
+def _has_surrogate(text: str) -> bool:
+    """Report whether `text` contains any lone UTF-16 surrogate code point."""
+
+    return any(0xD800 <= ord(character) <= 0xDFFF for character in text)
+
+
+def _has_visible_character(text: str) -> bool:
+    """Report whether `text` has a character that is neither space nor format."""
+
+    return any(
+        not character.isspace() and unicodedata.category(character) != "Cf"
+        for character in text
+    )
+
+
 def _task_text(value: object) -> str:
     """Validate one advisory task before it reaches Jev or the Herdr CLI."""
 
@@ -593,6 +609,16 @@ def _task_text(value: object) -> str:
         or 0x7F <= ord(character) <= 0x9F
         for character in task
     ):
+        raise _RequestError
+    # A surrogate cannot be encoded to UTF-8, so it would fail later while the
+    # Jev request body or the Herdr argv is encoded instead of here. Argparse
+    # turns undecodable command-line bytes into surrogates, so this is
+    # reachable from a real invocation.
+    if _has_surrogate(task):
+        raise _RequestError
+    # A task of only zero-width or other format characters is blank in intent
+    # but passes the whitespace-only check above.
+    if not _has_visible_character(task):
         raise _RequestError
     return task
 
@@ -752,11 +778,12 @@ def _spawn_identifier(value: object) -> str:
 
     identifier = _bounded_string(value, maximum=256)
     # The spawn summary prints names and pane ids to this process's stdout, so
-    # the same C0, DEL and C1 rejection as `_task_text` applies here.
+    # the same C0, DEL and C1 rejection as `_task_text` applies here. A
+    # surrogate would likewise fail when the Herdr argv is encoded.
     if any(
         ord(character) < 0x20 or 0x7F <= ord(character) <= 0x9F
         for character in identifier
-    ):
+    ) or _has_surrogate(identifier):
         raise _RequestError
     return identifier
 

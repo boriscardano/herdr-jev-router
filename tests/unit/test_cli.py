@@ -275,6 +275,68 @@ def test_explain_rejects_control_characters_in_the_task(
     assert called is False
 
 
+@pytest.mark.parametrize(
+    "task",
+    [
+        "a\ud800b",
+        "lone-high\ud800",
+        "lone-low\udcff",
+    ],
+)
+def test_explain_rejects_lone_surrogates_in_the_task(tmp_path: Path, task: str) -> None:
+    called = False
+
+    async def fake_jev(**kwargs: object) -> JevRoutingResult:
+        nonlocal called
+        called = True
+        return jev_result()
+
+    code, output = invoke_explain(tmp_path, fake_jev, task=task)
+
+    assert code == 2
+    assert json.loads(output)["denial"]["code"] == "invalid_request"
+    assert called is False
+
+
+@pytest.mark.parametrize(
+    "task",
+    [
+        "\u200b",
+        "\u200b\u200c\u200d",
+        "\u2060",
+        " \u200b\t\u200c ",
+    ],
+)
+def test_explain_rejects_invisible_only_tasks(tmp_path: Path, task: str) -> None:
+    called = False
+
+    async def fake_jev(**kwargs: object) -> JevRoutingResult:
+        nonlocal called
+        called = True
+        return jev_result()
+
+    code, output = invoke_explain(tmp_path, fake_jev, task=task)
+
+    assert code == 2
+    assert json.loads(output)["denial"]["code"] == "invalid_request"
+    assert called is False
+
+
+def test_explain_allows_format_characters_inside_visible_text(tmp_path: Path) -> None:
+    calls = 0
+
+    async def fake_jev(**kwargs: object) -> JevRoutingResult:
+        nonlocal calls
+        calls += 1
+        return jev_result()
+
+    code, output = invoke_explain(tmp_path, fake_jev, task="Fix\u200bthe\u2060test")
+
+    assert code == 0
+    assert "recommended harness:" in output
+    assert calls == 1
+
+
 def test_explain_allows_non_ascii_task_text(tmp_path: Path) -> None:
     calls = 0
 

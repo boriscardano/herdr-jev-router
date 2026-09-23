@@ -631,11 +631,115 @@ def test_spawn_rejects_c1_control_characters_in_name_and_pane(
     assert called is False
 
 
+@pytest.mark.parametrize(
+    "task",
+    [
+        "a\ud800b",
+        "lone-high\ud800",
+        "lone-low\udcff",
+    ],
+)
+def test_spawn_rejects_lone_surrogates_in_the_task(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, task: str
+) -> None:
+    executable, log = fake_herdr(tmp_path, monkeypatch)
+    called = False
+
+    async def fake_jev(**kwargs: object) -> JevRoutingResult:
+        nonlocal called
+        called = True
+        return jev_result()
+
+    code, output = run_spawn(
+        spawn_argv(task), tmp_path, herdr_command=executable, jev_callable=fake_jev
+    )
+
+    assert code == 2
+    assert denial(output)["code"] == "invalid_request"
+    assert read_log(log) == []
+    assert called is False
+
+
+@pytest.mark.parametrize("field", ["name", "pane"])
+def test_spawn_rejects_lone_surrogates_in_name_and_pane(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str
+) -> None:
+    executable, log = fake_herdr(tmp_path, monkeypatch)
+    called = False
+
+    async def fake_jev(**kwargs: object) -> JevRoutingResult:
+        nonlocal called
+        called = True
+        return jev_result()
+
+    code, output = run_spawn(
+        spawn_argv(
+            name="a\ud800b" if field == "name" else "worker",
+            pane="w1:p\ud8002" if field == "pane" else "w1:p2",
+        ),
+        tmp_path,
+        herdr_command=executable,
+        jev_callable=fake_jev,
+    )
+
+    assert code == 2
+    assert denial(output)["code"] == "invalid_request"
+    assert read_log(log) == []
+    assert called is False
+
+
+@pytest.mark.parametrize(
+    "task",
+    [
+        "\u200b",
+        "\u200b\u200c\u200d",
+        "\u2060",
+        " \u200b\t\u200c ",
+    ],
+)
+def test_spawn_rejects_invisible_only_tasks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, task: str
+) -> None:
+    executable, log = fake_herdr(tmp_path, monkeypatch)
+    called = False
+
+    async def fake_jev(**kwargs: object) -> JevRoutingResult:
+        nonlocal called
+        called = True
+        return jev_result()
+
+    code, output = run_spawn(
+        spawn_argv(task), tmp_path, herdr_command=executable, jev_callable=fake_jev
+    )
+
+    assert code == 2
+    assert denial(output)["code"] == "invalid_request"
+    assert read_log(log) == []
+    assert called is False
+
+
 def test_spawn_allows_non_ascii_task_text(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     executable, log = fake_herdr(tmp_path, monkeypatch)
     task = "Überprüfe die README\u00a0🚀"
+
+    async def fake_jev(**kwargs: object) -> JevRoutingResult:
+        return jev_result()
+
+    code, _ = run_spawn(
+        spawn_argv(task), tmp_path, herdr_command=executable, jev_callable=fake_jev
+    )
+
+    assert code == 0
+    assert read_log(log)[1]["argv"] == ["agent", "prompt", "worker", task]
+
+
+def test_spawn_allows_format_characters_inside_visible_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    executable, log = fake_herdr(tmp_path, monkeypatch)
+    task = "Fix\u200bthe\u2060test"
 
     async def fake_jev(**kwargs: object) -> JevRoutingResult:
         return jev_result()
