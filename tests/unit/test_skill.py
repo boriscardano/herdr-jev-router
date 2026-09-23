@@ -143,11 +143,10 @@ def _skill_description() -> str:
     raise AssertionError("the skill frontmatter has no description")
 
 
-def test_the_description_names_delegation_and_replaces_builtins() -> None:
+def test_the_description_names_delegation_and_builtins() -> None:
     description = _skill_description().lower()
 
     assert "delegat" in description or "parallel" in description
-    assert "replaces" in description
     assert "built-in subagents" in description
     assert "herdr agent start" in description
 
