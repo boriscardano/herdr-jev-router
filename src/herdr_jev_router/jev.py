@@ -66,6 +66,11 @@ _HARNESS_DESCRIPTIONS = {
     "pi": "Pi",
 }
 _CONSTRAINT_NAMES = frozenset({"read_only", "worktree", "network_required"})
+# Jev rounds each probability to two decimals, so every option can miss its
+# true value by up to 0.005 and an n-option sum by up to 0.005 * n. Accepting
+# that bound keeps rounded answers valid without accepting a genuinely
+# different distribution (0.8 or 1.2 stays rejected).
+_ROUNDING_TOLERANCE_PER_OPTION = 0.005
 
 
 _SECRET_HEADER_MARKERS = ("authorization", "api-key", "token", "secret")
@@ -96,6 +101,12 @@ class _RedactSdkBodies(logging.Filter):
 
 
 logging.getLogger("typesafe_sdk").addFilter(_RedactSdkBodies())
+
+
+def probability_sum_tolerance(option_count: int) -> float:
+    """Return the two-decimal rounding slack for an `option_count`-way choice."""
+
+    return _ROUNDING_TOLERANCE_PER_OPTION * option_count
 
 
 class JevError(RuntimeError):
@@ -262,7 +273,11 @@ async def route_with_jev(
                 not isfinite(probability) or not 0.0 <= probability <= 1.0
                 for probability in probabilities.values()
             )
-            or not isclose(fsum(probabilities.values()), 1.0, abs_tol=1e-6)
+            or not isclose(
+                fsum(probabilities.values()),
+                1.0,
+                abs_tol=probability_sum_tolerance(len(expected)),
+            )
             or probabilities[answer.choice] != max(probabilities.values())
             or not isfinite(answer.confidence)
             or not 0.0 <= answer.confidence <= 1.0

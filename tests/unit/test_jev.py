@@ -571,6 +571,72 @@ def test_each_probability_map_is_validated(answer_id: str, label: str) -> None:
     assert error.value.code == "invalid_response"
 
 
+@pytest.mark.parametrize(
+    "answer_id, probabilities, choice",
+    [
+        # Jev rounds each probability to two decimals, so a valid integer-ish
+        # split can sum to 0.99 or 1.01 instead of exactly 1.0.
+        ("codex_model", {"luna": 0.33, "terra": 0.33, "sol": 0.33}, "terra"),
+        ("codex_model", {"luna": 0.34, "terra": 0.33, "sol": 0.34}, "luna"),
+        # The slack scales with the option count: 0.98 is 0.02 from one, which
+        # only the five-way `0.005 * 5` bound admits.
+        (
+            "effort",
+            {"low": 0.2, "medium": 0.2, "high": 0.2, "xhigh": 0.2, "max": 0.18},
+            "low",
+        ),
+    ],
+)
+def test_two_decimal_rounded_probability_sums_are_accepted(
+    answer_id: str, probabilities: dict[str, float], choice: str
+) -> None:
+    body = valid_response()
+    answers = body["answers"]
+    assert isinstance(answers, dict)
+    answer = answers[answer_id]
+    assert isinstance(answer, dict)
+    answer["choice"] = choice
+    answer["probabilities"] = probabilities
+
+    result = call_with_transport(MockTransport(lambda request: response(body)))
+
+    assert result.probabilities[answer_id] == probabilities
+
+
+@pytest.mark.parametrize(
+    "answer_id, probabilities, choice",
+    [
+        # 0.8 is far below one; nothing that rounds to two decimals can explain it.
+        ("codex_model", {"luna": 0.5, "terra": 0.2, "sol": 0.1}, "luna"),
+        # 1.2 is far above one for the same reason.
+        ("codex_model", {"luna": 0.5, "terra": 0.4, "sol": 0.3}, "luna"),
+        # Three options tolerate at most 3 * 0.005; 0.97 is outside that bound.
+        ("codex_model", {"luna": 0.32, "terra": 0.33, "sol": 0.32}, "terra"),
+        # Five options tolerate at most 5 * 0.005; 0.97 is outside that bound too.
+        (
+            "effort",
+            {"low": 0.2, "medium": 0.2, "high": 0.2, "xhigh": 0.2, "max": 0.17},
+            "low",
+        ),
+    ],
+)
+def test_probability_sums_outside_the_rounding_bound_are_rejected(
+    answer_id: str, probabilities: dict[str, float], choice: str
+) -> None:
+    body = valid_response()
+    answers = body["answers"]
+    assert isinstance(answers, dict)
+    answer = answers[answer_id]
+    assert isinstance(answer, dict)
+    answer["choice"] = choice
+    answer["probabilities"] = probabilities
+
+    with pytest.raises(JevError) as error:
+        call_with_transport(MockTransport(lambda request: response(body)))
+
+    assert error.value.code == "invalid_response"
+
+
 def test_malformed_success_body_maps_to_invalid_response() -> None:
     with pytest.raises(JevError) as error:
         call_with_transport(

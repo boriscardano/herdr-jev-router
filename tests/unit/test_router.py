@@ -4,8 +4,9 @@ import os
 from pathlib import Path
 
 import pytest
+from httpx2 import MockTransport, Response
 
-from herdr_jev_router.jev import JevError, JevRoutingResult
+from herdr_jev_router.jev import JevError, JevRoutingResult, route_with_jev
 from herdr_jev_router.models import (
     CapacityState,
     ClaudeModel,
@@ -360,6 +361,8 @@ def test_recommend_audits_every_jev_error_category_without_leaking_details(
     assert error.value.code == "jev_failed"
     record = audit_record(tmp_path)
     assert record["error_category"] == "jev"
+    # The stable Jev code explains the failure; the raw message must not leak.
+    assert record["jev_error_code"] == jev_exception.code
     assert jev_exception.args[0] not in json.dumps(record)
 
 
@@ -450,9 +453,110 @@ def test_jev_failure_is_audited_without_raw_exception_data(tmp_path: Path) -> No
         run_recommend(tmp_path, failing_jev)
 
     assert error.value.code == "jev_failed"
-    serialized = json.dumps(audit_record(tmp_path))
+    record = audit_record(tmp_path)
+    serialized = json.dumps(record)
     assert '"error_category": "jev"' in serialized
+    assert record["jev_error_code"] == "connection"
     assert "secret provider body" not in serialized
+
+
+def test_non_jev_failure_is_audited_without_a_jev_error_code(tmp_path: Path) -> None:
+    async def failing_jev(**kwargs: object) -> JevRoutingResult:
+        raise RuntimeError("unexpected private detail")
+
+    with pytest.raises(RouterError) as error:
+        run_recommend(tmp_path, failing_jev)
+
+    assert error.value.code == "jev_failed"
+    record = audit_record(tmp_path)
+    assert record["error_category"] == "jev"
+    assert record["jev_error_code"] is None
+    assert "unexpected private detail" not in json.dumps(record)
+
+
+def test_recommend_accepts_two_decimal_rounded_jev_probabilities(
+    tmp_path: Path,
+) -> None:
+    body = {
+        "model": "jev-test-1",
+        "answers": {
+            "harness": {
+                "type": "choice",
+                "choice": "codex",
+                "probabilities": {
+                    "claude": 0.2,
+                    "codex": 0.5,
+                    "opencode": 0.2,
+                    "pi": 0.1,
+                },
+                "confidence": 0.5,
+            },
+            "claude_model": {
+                "type": "choice",
+                "choice": "sonnet",
+                "probabilities": {"haiku": 0.2, "sonnet": 0.6, "opus": 0.2},
+                "confidence": 0.4,
+            },
+            "codex_model": {
+                "type": "choice",
+                "choice": "terra",
+                "probabilities": {"luna": 0.33, "terra": 0.33, "sol": 0.33},
+                "confidence": 0.5,
+            },
+            "opencode_model": {
+                "type": "choice",
+                "choice": "deepseek",
+                "probabilities": {"deepseek": 0.6, "glm": 0.3, "kimi": 0.1},
+                "confidence": 0.5,
+            },
+            "pi_model": {
+                "type": "choice",
+                "choice": "deepseek",
+                "probabilities": {"deepseek": 0.6, "glm": 0.3, "kimi": 0.1},
+                "confidence": 0.5,
+            },
+            "effort": {
+                "type": "choice",
+                "choice": "high",
+                "probabilities": {
+                    "low": 0.05,
+                    "medium": 0.15,
+                    "high": 0.6,
+                    "xhigh": 0.15,
+                    "max": 0.05,
+                },
+                "confidence": 0.5,
+            },
+        },
+        "usage": {"input_tokens": 123, "output_tokens": 45},
+    }
+
+    def handler(request: object) -> Response:
+        return Response(
+            200,
+            headers={"content-type": "application/json"},
+            content=json.dumps(body).encode(),
+        )
+
+    async def jev(**kwargs: object) -> JevRoutingResult:
+        return await route_with_jev(
+            api_key="dummy-test-key",
+            transport=MockTransport(handler),
+            **kwargs,  # type: ignore[arg-type]
+        )
+
+    result = run_recommend(tmp_path, jev)
+
+    assert result.recommended.codex_model is CodexModel.TERRA
+    record = audit_record(tmp_path)
+    assert record["error_category"] is None
+    jev_audit = record["jev"]
+    assert isinstance(jev_audit, dict)
+    assert jev_audit["answers"]["codex_model"] == {
+        "label": "terra",
+        "probabilities": {"luna": 0.33, "terra": 0.33, "sol": 0.33},
+        "confidence": 0.5,
+    }
 
 
 def test_recommend_fails_without_calling_jev_when_all_capacity_is_exhausted(

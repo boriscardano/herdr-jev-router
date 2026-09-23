@@ -110,7 +110,10 @@ a visible process is the one it started.
 Both commands write a `recommendation`-phase audit record through the same
 owner-only, fsynced, `schema_version: 2` audit writer. The record is durable
 before `herdr agent start` runs. It never contains the task text, launch
-arguments, API key, authorization header, or raw provider response.
+arguments, API key, authorization header, or raw provider response. A failed
+Jev call records `error_category: "jev"` and Jev's stable `jev_error_code`
+(for example `connection` or `invalid_response`), so the cause is diagnosable
+without the raw message.
 
 ## Acceptance criteria
 

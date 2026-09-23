@@ -181,6 +181,17 @@ stock Herdr does not roll it back. The router sends no task in that case and
 adds no cleanup code. Inspect and close the pane before retrying. The full
 contract is in [advisory-mode.md](advisory-mode.md).
 
+## Jev answer validation
+
+Every answer must carry the exact expected option set, each probability finite
+and in `[0, 1]`, the chosen option at least tied for the highest probability,
+and a confidence in `[0, 1]`. The probabilities must sum to one within the
+two-decimal rounding bound of `0.005 * options`: Jev rounds each probability to
+two decimals, so a valid three-option answer can sum to 0.99 or 1.01. A sum
+further from one, such as 0.8 or 1.2, is still rejected. Both the request-level
+and the audit-level validator call one shared tolerance helper so they cannot
+diverge.
+
 ## Audit record
 
 Both commands write one `recommendation`-phase record through an owner-only,
@@ -208,3 +219,8 @@ provider was removed or chosen.
 The record is written before any child starts. Failures carry an
 `error_category` such as `capacity`, `jev`, `validation`, or `audit` and no
 decision. The record never contains the task text or a credential.
+
+A failed Jev call additionally records `jev_error_code`, Jev's stable code such
+as `connection` or `invalid_response`, or `null` when the failure did not come
+from a typed `JevError`. The code makes a recurring failure diagnosable from
+the record; the raw message and response body are never recorded.

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Rounded Jev probabilities no longer fail a spawn. Jev rounds each answer's
+  probabilities to two decimals, so a valid three-option answer can sum to
+  0.99 or 1.01. The router now accepts a sum within the two-decimal rounding
+  bound of `0.005 * options`, while a genuinely different distribution such as
+  0.8 or 1.2 is still rejected.
+- A failed Jev call now records Jev's stable error code in the audit record as
+  `jev_error_code`, so a recurring failure is diagnosable from the record
+  alone. The raw message and response body are still never audited.
+
 ## [0.1.3] - 2026-09-23
 
 ### Added
