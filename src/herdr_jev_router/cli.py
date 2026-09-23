@@ -779,7 +779,9 @@ def _spawn_identifier(value: object) -> str:
     identifier = _bounded_string(value, maximum=256)
     # The spawn summary prints names and pane ids to this process's stdout, so
     # the same C0, DEL and C1 rejection as `_task_text` applies here. A
-    # surrogate would likewise fail when the Herdr argv is encoded.
+    # surrogate is not valid text: a high surrogate cannot be encoded for the
+    # Herdr argv, and a low surrogate from argparse's surrogateescape would
+    # reach Herdr as the original undecodable byte.
     if any(
         ord(character) < 0x20 or 0x7F <= ord(character) <= 0x9F
         for character in identifier

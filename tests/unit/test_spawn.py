@@ -660,9 +660,17 @@ def test_spawn_rejects_lone_surrogates_in_the_task(
     assert called is False
 
 
-@pytest.mark.parametrize("field", ["name", "pane"])
+@pytest.mark.parametrize(
+    ("name", "pane"),
+    [
+        ("a\ud800b", "w1:p2"),
+        ("a\udcffb", "w1:p2"),
+        ("worker", "w1:p\ud8002"),
+        ("worker", "w1:p\udcff2"),
+    ],
+)
 def test_spawn_rejects_lone_surrogates_in_name_and_pane(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, pane: str
 ) -> None:
     executable, log = fake_herdr(tmp_path, monkeypatch)
     called = False
@@ -673,10 +681,7 @@ def test_spawn_rejects_lone_surrogates_in_name_and_pane(
         return jev_result()
 
     code, output = run_spawn(
-        spawn_argv(
-            name="a\ud800b" if field == "name" else "worker",
-            pane="w1:p\ud8002" if field == "pane" else "w1:p2",
-        ),
+        spawn_argv(name=name, pane=pane),
         tmp_path,
         herdr_command=executable,
         jev_callable=fake_jev,
