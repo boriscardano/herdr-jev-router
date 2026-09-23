@@ -15,6 +15,7 @@ from herdr_jev_router.models import (
     OpenCodeModel,
     PiModel,
     ProviderCapacity,
+    QuotaDetail,
     RoutingDecision,
 )
 from herdr_jev_router.policy import route_eligible
@@ -466,7 +467,6 @@ def test_recommend_fails_without_calling_jev_when_all_capacity_is_exhausted(
 
 
 def test_audit_records_the_same_quota_numbers_sent_to_jev(tmp_path: Path) -> None:
-    from herdr_jev_router.models import QuotaDetail
 
     capacities_snapshot = (
         ProviderCapacity(
@@ -507,7 +507,6 @@ def test_audit_records_the_same_quota_numbers_sent_to_jev(tmp_path: Path) -> Non
 
 
 def test_audit_explains_a_removed_critical_provider(tmp_path: Path) -> None:
-    from herdr_jev_router.models import QuotaDetail
 
     capacities_snapshot = (
         ProviderCapacity(Harness.CLAUDE, CapacityState.ON_PACE),

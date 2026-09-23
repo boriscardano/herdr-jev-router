@@ -147,3 +147,110 @@ def test_routing_decision_requires_each_branch_model_type(
 ) -> None:
     with pytest.raises(TypeError, match=message):
         RoutingDecision(**decision_kwargs(**{field: value}))  # type: ignore[arg-type]
+
+
+def test_quota_detail_is_immutable_and_serializes_four_numbers() -> None:
+    from herdr_jev_router.models import QuotaDetail
+
+    detail = QuotaDetail(85, 2, 35, 100)
+
+    with pytest.raises(FrozenInstanceError):
+        detail.weekly_remaining_percent = 1  # type: ignore[misc]
+
+    assert detail.to_dict() == {
+        "five_hour_remaining_percent": 85,
+        "five_hour_resets_in_hours": 2,
+        "weekly_remaining_percent": 35,
+        "weekly_resets_in_hours": 100,
+    }
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("five_hour_remaining_percent", -0.1),
+        ("five_hour_remaining_percent", 100.1),
+        ("weekly_remaining_percent", 101),
+        ("five_hour_resets_in_hours", -1),
+        ("weekly_resets_in_hours", -0.5),
+    ],
+)
+def test_quota_detail_rejects_out_of_range_numbers(field: str, value: float) -> None:
+    from herdr_jev_router.models import QuotaDetail
+
+    values: dict[str, object] = {
+        "five_hour_remaining_percent": 85,
+        "five_hour_resets_in_hours": 2,
+        "weekly_remaining_percent": 35,
+        "weekly_resets_in_hours": 100,
+    }
+    values[field] = value
+
+    with pytest.raises(ValueError):
+        QuotaDetail(**values)  # type: ignore[arg-type]
+
+
+def test_quota_detail_requires_a_known_window_to_carry_both_numbers() -> None:
+    from herdr_jev_router.models import QuotaDetail
+
+    with pytest.raises(ValueError, match="known window"):
+        QuotaDetail(five_hour_remaining_percent=85)
+
+    with pytest.raises(ValueError, match="known window"):
+        QuotaDetail(weekly_resets_in_hours=100)
+
+
+def test_quota_detail_rejects_non_numeric_or_non_finite_numbers() -> None:
+    from herdr_jev_router.models import QuotaDetail
+
+    with pytest.raises(TypeError, match="must be numeric"):
+        QuotaDetail(five_hour_remaining_percent="85", five_hour_resets_in_hours=2)
+
+    with pytest.raises(ValueError, match="must be finite"):
+        QuotaDetail(
+            five_hour_remaining_percent=float("nan"),
+            five_hour_resets_in_hours=2,
+        )
+
+
+def test_provider_capacity_rejects_a_non_quota_detail_and_bad_reason() -> None:
+    with pytest.raises(TypeError, match="quota must be a QuotaDetail"):
+        ProviderCapacity(
+            harness=Harness.CODEX,
+            state=CapacityState.ON_PACE,
+            quota=object(),  # type: ignore[arg-type]
+        )
+
+    with pytest.raises(TypeError, match="reason must be a non-empty string"):
+        ProviderCapacity(
+            harness=Harness.CODEX,
+            state=CapacityState.CRITICAL,
+            reason="",
+        )
+
+
+def test_critical_capacity_rejects_a_negative_penalty() -> None:
+    with pytest.raises(ValueError, match="penalty must not be negative"):
+        ProviderCapacity(
+            harness=Harness.CODEX,
+            state=CapacityState.CRITICAL,
+            penalty=-1,
+        )
+
+
+def test_reason_is_only_allowed_for_critical_capacity() -> None:
+    with pytest.raises(ValueError, match="reason is only for critical capacity"):
+        ProviderCapacity(
+            harness=Harness.CODEX,
+            state=CapacityState.ON_PACE,
+            reason="not critical",
+        )
+
+    assert (
+        ProviderCapacity(
+            harness=Harness.CODEX,
+            state=CapacityState.CRITICAL,
+            reason="codex weekly 6% left, resets in 38h",
+        ).reason
+        == "codex weekly 6% left, resets in 38h"
+    )

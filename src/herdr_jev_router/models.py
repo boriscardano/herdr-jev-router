@@ -180,6 +180,8 @@ class ProviderCapacity:
             not isinstance(self.reason, str) or not self.reason
         ):
             raise TypeError("reason must be a non-empty string or None")
+        if self.reason is not None and self.state is not CapacityState.CRITICAL:
+            raise ValueError("reason is only for critical capacity")
 
 
 @dataclass(frozen=True, slots=True)

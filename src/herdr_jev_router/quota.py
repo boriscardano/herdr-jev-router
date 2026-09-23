@@ -417,7 +417,11 @@ def _quota_detail(windows: tuple[QuotaWindow, ...], *, now: float) -> QuotaDetai
 def _select_window(
     windows: tuple[QuotaWindow, ...], *, target: float
 ) -> QuotaWindow | None:
-    """Return the most conservative window of the requested nominal length."""
+    """Return the window closest to the nominal length, then the most conservative.
+
+    The closest-length tie-break matters for Claude's `spend_limit` window,
+    whose synthetic length can land near 5 hours; the real nominal window wins.
+    """
 
     matches = tuple(
         window
@@ -427,7 +431,12 @@ def _select_window(
     if not matches:
         return None
     return min(
-        matches, key=lambda window: (window.remaining_percent, -window.resets_at)
+        matches,
+        key=lambda window: (
+            abs(window.window_seconds - target),
+            window.remaining_percent,
+            -window.resets_at,
+        ),
     )
 
 

@@ -13,8 +13,13 @@ from herdr_jev_router.models import (
     CodexModel,
     Harness,
     ProviderCapacity,
+    QuotaDetail,
 )
-from herdr_jev_router.policy import validate_decision
+from herdr_jev_router.policy import (
+    CRITICAL_CAPACITY_PENALTY,
+    apply_critical_fallback,
+    validate_decision,
+)
 
 
 def valid_response() -> dict[str, object]:
@@ -618,8 +623,6 @@ def test_malformed_typed_answer_or_probability_map_fails_closed(case: str) -> No
 
 
 def test_jev_state_carries_window_numbers_and_a_quota_preference() -> None:
-    from herdr_jev_router.models import QuotaDetail
-
     capacities = (
         ProviderCapacity(
             Harness.CLAUDE,
@@ -660,8 +663,6 @@ def test_jev_state_carries_window_numbers_and_a_quota_preference() -> None:
 
 
 def test_jev_removes_a_critical_provider_when_an_alternative_remains() -> None:
-    from herdr_jev_router.models import QuotaDetail
-
     body = valid_response()
     answers = body["answers"]
     assert isinstance(answers, dict)
@@ -693,12 +694,6 @@ def test_jev_removes_a_critical_provider_when_an_alternative_remains() -> None:
 
 
 def test_jev_offers_the_only_critical_provider_with_a_penalty() -> None:
-    from herdr_jev_router.models import QuotaDetail
-    from herdr_jev_router.policy import (
-        CRITICAL_CAPACITY_PENALTY,
-        apply_critical_fallback,
-    )
-
     body = valid_response()
     answers = body["answers"]
     assert isinstance(answers, dict)

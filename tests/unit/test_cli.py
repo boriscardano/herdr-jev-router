@@ -2,14 +2,16 @@ import io
 import json
 import os
 import tomllib
+from functools import partial
 from pathlib import Path
 
 import pytest
+from httpx2 import MockTransport, Request, Response
 
 import herdr_jev_router.cli as cli_module
 import herdr_jev_router.router as router_module
 from herdr_jev_router.cli import main
-from herdr_jev_router.jev import JevRoutingResult
+from herdr_jev_router.jev import JevRoutingResult, route_with_jev
 from herdr_jev_router.quota import QuotaSnapshot, QuotaWindow, write_cache
 
 _OPT_IN_ENVIRONMENT = {
@@ -887,8 +889,6 @@ def test_default_state_directory_uses_configured_environment(tmp_path: Path) -> 
 
 
 def _quota_response(harnesses: tuple[str, ...], selected: str = "claude"):
-    from httpx2 import Response
-
     return Response(
         200,
         headers={"content-type": "application/json"},
@@ -978,12 +978,6 @@ def _advisory_commands(name: str) -> str | None:
 def test_explain_removes_critical_codex_and_sends_claude_numbers_to_jev(
     tmp_path: Path,
 ) -> None:
-    from functools import partial
-
-    from httpx2 import MockTransport, Request
-
-    from herdr_jev_router.jev import route_with_jev
-
     state = tmp_path / "state"
     _claude_and_critical_codex(state)
     payloads: list[dict[str, object]] = []
@@ -1065,3 +1059,43 @@ def test_doctor_human_reports_critical_with_the_reason(tmp_path: Path) -> None:
     assert "quota codex: critical (codex weekly 6% left, resets in 38h)" in (
         stdout.getvalue()
     )
+
+
+def test_explain_keeps_the_only_critical_provider_with_a_penalty(
+    tmp_path: Path,
+) -> None:
+    state = tmp_path / "state"
+    write_cache(
+        state / "codex-quota.json",
+        QuotaSnapshot(
+            provider="codex",
+            source="codex_app_server",
+            observed_at=1_000,
+            captured_at=1_000,
+            windows=(QuotaWindow("primary", 94, 6, 604_800, 1_000 + 38 * 3_600),),
+        ),
+    )
+    payloads: list[dict[str, object]] = []
+
+    def handler(request: Request):
+        payloads.append(json.loads(request.content))
+        return _quota_response(("codex",), selected="codex")
+
+    def only_codex(name: str) -> str | None:
+        return f"/usr/bin/{name}" if name in {"herdr", "codex"} else None
+
+    code, output = invoke_explain(
+        tmp_path,
+        partial(route_with_jev, transport=MockTransport(handler)),
+        command_finder=only_codex,
+    )
+
+    assert code == 0
+    assert payloads[0]["state"]["capacity"]["codex"]["penalty"] == 2
+    assert "capacity codex: critical (codex weekly 6% left, resets in 38h)" in output
+    record = json.loads(
+        (tmp_path / "audit.jsonl").read_text(encoding="utf-8").splitlines()[-1]
+    )
+    assert record["capacity"]["codex"]["state"] == "critical"
+    assert record["capacity"]["codex"]["penalty"] == 2
+    assert record["capacity"]["claude"]["state"] == "exhausted"

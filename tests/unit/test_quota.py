@@ -6,11 +6,12 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from herdr_jev_router.models import CapacityState
+from herdr_jev_router.models import CapacityState, QuotaDetail
 from herdr_jev_router.quota import (
     CACHE_MAX_AGE_SECONDS,
     QuotaSnapshot,
     QuotaWindow,
+    assess_capacity,
     classify_capacity,
     owner_only_directory,
     provider_lock,
@@ -386,9 +387,6 @@ def _snapshot_with_windows(
 
 
 def test_window_mapping_is_by_length_not_provider_specific_names() -> None:
-    from herdr_jev_router.models import QuotaDetail
-    from herdr_jev_router.quota import assess_capacity
-
     now = 1_000.0
     # Claude's names are five_hour/seven_day; Codex's are primary/secondary.
     # The Codex fixture puts the weekly window in `primary` on purpose, so a
@@ -413,8 +411,6 @@ def test_window_mapping_is_by_length_not_provider_specific_names() -> None:
 
 
 def test_unknown_or_stale_windows_give_null_quota_never_a_guess() -> None:
-    from herdr_jev_router.models import QuotaDetail
-    from herdr_jev_router.quota import assess_capacity
 
     now = 1_000.0
     empty = QuotaDetail()
@@ -446,7 +442,6 @@ def test_unknown_or_stale_windows_give_null_quota_never_a_guess() -> None:
 
 
 def test_critical_when_a_known_window_is_low_and_resets_far_out() -> None:
-    from herdr_jev_router.quota import assess_capacity
 
     now = 1_000.0
     codex = _snapshot_with_windows(
@@ -476,7 +471,6 @@ def test_critical_when_a_known_window_is_low_and_resets_far_out() -> None:
 def test_critical_needs_both_low_remaining_and_a_far_reset(
     remaining: float, resets_in_hours: float, expected: CapacityState
 ) -> None:
-    from herdr_jev_router.quota import assess_capacity
 
     now = 1_000.0
     snapshot = _snapshot_with_windows(
@@ -496,7 +490,6 @@ def test_critical_needs_both_low_remaining_and_a_far_reset(
 
 
 def test_exhausted_takes_precedence_over_critical() -> None:
-    from herdr_jev_router.quota import assess_capacity
 
     now = 1_000.0
     snapshot = _snapshot_with_windows(
@@ -508,3 +501,22 @@ def test_exhausted_takes_precedence_over_critical() -> None:
 
     assert assessment.state is CapacityState.EXHAUSTED
     assert assessment.reason is None
+
+
+def test_quota_slot_prefers_the_window_closest_to_the_nominal_length() -> None:
+
+    now = 1_000.0
+    # Claude's spend_limit window stores `resets_at - captured_at` as its
+    # synthetic length, so it can look about 5 hours long. It must not shadow
+    # the real five_hour window in the 5-hour slot.
+    snapshot = _snapshot_with_windows(
+        "claude",
+        (
+            QuotaWindow("five_hour", 15, 85, 18_000, now + 2 * 3_600),
+            QuotaWindow("spend_limit", 97, 3, 17_280, now + 17_280),
+        ),
+    )
+
+    assessment = assess_capacity(snapshot, now=now)
+
+    assert assessment.quota == QuotaDetail(85, 2, None, None)

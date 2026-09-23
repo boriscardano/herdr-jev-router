@@ -13,8 +13,11 @@ from herdr_jev_router.models import (
     RoutingDecision,
 )
 from herdr_jev_router.policy import (
+    CRITICAL_CAPACITY_PENALTY,
     RoutingPolicyError,
+    apply_critical_fallback,
     launch_profile,
+    route_eligible,
     validate_decision,
 )
 
@@ -293,11 +296,7 @@ def critical_capacity(
     )
 
 
-def test_route_eligible_removes_a_critical_provider_when_an_alternative_remains() -> (
-    None
-):
-    from herdr_jev_router.policy import route_eligible
-
+def test_route_eligible_removes_critical_when_an_alternative_remains() -> None:
     capacities = (
         critical_capacity(Harness.CODEX),
         ProviderCapacity(Harness.CLAUDE, CapacityState.CONSERVE),
@@ -309,12 +308,6 @@ def test_route_eligible_removes_a_critical_provider_when_an_alternative_remains(
 
 
 def test_only_provider_fallback_keeps_critical_eligible_with_a_penalty() -> None:
-    from herdr_jev_router.policy import (
-        CRITICAL_CAPACITY_PENALTY,
-        apply_critical_fallback,
-        route_eligible,
-    )
-
     capacities = (critical_capacity(Harness.CODEX),)
 
     effective = apply_critical_fallback(capacities)
@@ -324,12 +317,6 @@ def test_only_provider_fallback_keeps_critical_eligible_with_a_penalty() -> None
 
 
 def test_critical_fallback_does_not_resurrect_exhausted_providers() -> None:
-    from herdr_jev_router.policy import (
-        CRITICAL_CAPACITY_PENALTY,
-        apply_critical_fallback,
-        route_eligible,
-    )
-
     capacities = (
         critical_capacity(Harness.CODEX),
         ProviderCapacity(Harness.CLAUDE, CapacityState.EXHAUSTED),
@@ -343,8 +330,6 @@ def test_critical_fallback_does_not_resurrect_exhausted_providers() -> None:
 
 
 def test_route_eligible_returns_nothing_when_every_provider_is_exhausted() -> None:
-    from herdr_jev_router.policy import route_eligible
-
     assert (
         route_eligible(
             (
@@ -357,8 +342,6 @@ def test_route_eligible_returns_nothing_when_every_provider_is_exhausted() -> No
 
 
 def test_decision_validation_rejects_a_removed_critical_harness() -> None:
-    from herdr_jev_router.policy import route_eligible
-
     capacities = (
         critical_capacity(Harness.CODEX),
         ProviderCapacity(Harness.CLAUDE, CapacityState.CONSERVE),
@@ -374,8 +357,6 @@ def test_decision_validation_rejects_a_removed_critical_harness() -> None:
 
 
 def test_decision_validation_accepts_the_only_critical_provider() -> None:
-    from herdr_jev_router.policy import apply_critical_fallback
-
     capacities = apply_critical_fallback((critical_capacity(Harness.CODEX),))
 
     decision = validate_decision(valid_answers(harness=choice("codex")), capacities)
