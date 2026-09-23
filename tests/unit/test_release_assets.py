@@ -1,8 +1,8 @@
 """Guard the CI workflow against supply-chain regressions.
 
-This repository does not publish to PyPI. The CI workflow is still a release
-asset, so these tests keep its rules: every GitHub action is pinned to a full
-commit SHA with a version comment, and checkout never persists credentials.
+This repository does not publish to PyPI. These tests keep the rules that
+still apply to ci.yml: every GitHub action is pinned to a full commit SHA
+with a version comment, and checkout never persists credentials.
 """
 
 import re
@@ -27,7 +27,7 @@ def test_every_github_action_is_pinned_to_a_commit_sha_with_a_version_comment() 
         )
 
 
-def test_workflows_do_not_persist_checkout_credentials() -> None:
+def test_ci_workflow_does_not_persist_checkout_credentials() -> None:
     text = CI_WORKFLOW.read_text(encoding="utf-8")
     checkouts = text.count("actions/checkout@")
     assert checkouts
