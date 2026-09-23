@@ -44,8 +44,9 @@ exhausted provider. See [multi-harness-routing.md](multi-harness-routing.md).
   fails, no child starts.
 - `spawn` delivers the task exactly once, after `herdr agent start` reports the
   child ready.
-- The router reads `TYPESAFE_API_KEY` from its own environment and removes it
-  from the environment it passes to the Herdr CLI.
+- The router reads the Jev key from `TYPESAFE_API_KEY` when it is set, and
+  otherwise from the owner-only key file `$XDG_CONFIG_HOME/herdr-jev-router/key`,
+  and removes `TYPESAFE_API_KEY` from the environment it passes to the Herdr CLI.
 
 ## What it does not guarantee
 
@@ -107,8 +108,9 @@ See [quota-sources.md](quota-sources.md).
 - The router builds the launch argv from a closed mapping. It never builds a
   shell command, and it passes the task to Herdr as one argument, not a shell
   string.
-- `TYPESAFE_API_KEY` is the only credential input. It is never written to the
-  audit, a cache, or stdout.
+- The Jev key comes from `TYPESAFE_API_KEY` or the owner-only key file. It is
+  never written to the audit, a cache, or stdout, and never passed to a child
+  process.
 - The state directory is owner-only, mode `0700`, and the audit and cache files
   are owner-only, mode `0600`. The router refuses a symlinked path or a file it
   does not own. The files never contain the
@@ -137,7 +139,7 @@ See [quota-sources.md](quota-sources.md).
 | 1 | `task_delivery_failed` | The child started but `herdr agent prompt` failed. |
 | 2 | `invalid_request` | Bad or injected arguments. |
 | 2 | `invalid_harness_configuration` | A malformed opt-in harness configuration. |
-| 2 | `configuration_failed` | No `TYPESAFE_API_KEY`, or no `herdr` executable. |
+| 2 | `configuration_failed` | No `TYPESAFE_API_KEY` or owner-only key file, or no `herdr` executable. |
 
 A readiness timeout can leave a partially started agent in the pane, because
 stock Herdr does not roll it back. The router sends no task in that case and

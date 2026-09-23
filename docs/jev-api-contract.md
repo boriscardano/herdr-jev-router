@@ -195,7 +195,9 @@ from typesafe_sdk import (
 )
 ```
 
-Use `TYPESAFE_API_KEY` from the environment. Keep it in the router process only.
+Use `TYPESAFE_API_KEY` from the environment, or the owner-only key file at
+`$XDG_CONFIG_HOME/herdr-jev-router/key` when the variable is unset. Keep it in
+the router process only.
 Never include it in logs, test fixtures, exception output, or audit records.
 
 ## Errors, retries, and timeouts

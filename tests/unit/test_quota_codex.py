@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import herdr_jev_router.quota_codex as quota_codex
 from herdr_jev_router.models import CapacityState
 from herdr_jev_router.quota import classify_capacity, read_cache
 from herdr_jev_router.quota_codex import (
@@ -106,13 +107,14 @@ import sys
 import time
 
 pid_path = sys.argv[1]
+version = sys.argv[2]
 with open(pid_path, "w") as output:
     output.write(str(os.getpid()))
 for line in sys.stdin:
     request = json.loads(line)
     if request.get("id") == 1:
         assert request.get("params") == {
-            "clientInfo": {"name": "herdr-jev-router", "version": "0.1.0"},
+            "clientInfo": {"name": "herdr-jev-router", "version": version},
             "capabilities": {},
         }
         print(json.dumps({"id": 1, "result": {}}), flush=True)
@@ -128,7 +130,14 @@ time.sleep(30)
         collect_codex(
             tmp_path,
             now=1_800_000_000,
-            command=(sys.executable, "-u", "-c", program, str(pid_path)),
+            command=(
+                sys.executable,
+                "-u",
+                "-c",
+                program,
+                str(pid_path),
+                quota_codex.CLIENT_VERSION,
+            ),
             timeout=1,
         )
     )

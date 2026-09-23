@@ -50,8 +50,9 @@ with the trusted `launch_profile()` code. There is no second mapping.
   recommended decision, and never the task text or any credential.
 - Fail closed: if capacity, Jev, validation, the audit write, or launch-profile
   building fails, nothing is started and the command exits non-zero.
-- Child processes receive no `TYPESAFE_API_KEY`. The router strips it from the
-  environment it passes to `herdr`.
+- Child processes receive no Jev key. The router strips `TYPESAFE_API_KEY` from
+  the environment it passes to `herdr`, and the Herdr CLI never reads the key
+  file.
 
 ## What it does not guarantee
 
@@ -93,7 +94,7 @@ and close it as described below.
 | 1 | `launch_failed` | `herdr agent start` failed, timed out, or is missing. No task sent, and a partial agent may remain in the pane. |
 | 1 | `task_delivery_failed` | The child started but `herdr agent prompt` failed. |
 | 2 | `invalid_request` | Bad or injected arguments. |
-| 2 | `configuration_failed` | No `TYPESAFE_API_KEY`, or no `herdr` executable for `spawn`. |
+| 2 | `configuration_failed` | No `TYPESAFE_API_KEY` or owner-only key file, or no `herdr` executable for `spawn`. |
 
 A `launch_failed` result caused by the start timeout means the stock CLI did not
 confirm readiness within the bound. Stock Herdr does not roll back a partially
@@ -122,6 +123,6 @@ arguments, API key, authorization header, or raw provider response.
    nothing unless the failure is `task_delivery_failed`.
 4. `explain` audits the same decision and starts nothing.
 5. No credential appears in stdout, stderr, the audit record, or the child
-   environment.
+   environment, whether it came from the environment or the key file.
 6. `herdr-plugin.toml` satisfies the stock 0.9.1 manifest parser so
    `herdr plugin install`/`link` of this repository works on stock Herdr.

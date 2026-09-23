@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-23
+
+### Added
+
+- The Jev key can come from the owner-only key file
+  `$XDG_CONFIG_HOME/herdr-jev-router/key` when `TYPESAFE_API_KEY` is unset, so a
+  master agent can run `herdr-jev-router spawn` with no wrapper and no key in
+  its environment. The file is accepted only when it is a regular file owned by
+  the current user with mode 0600, inside a directory the current user owns
+  that is not group- or world-writable. An unsafe or empty file fails closed
+  like a missing key.
+- `doctor` and `doctor --human` report whether a key was found and whether it
+  came from the environment or the key file, never the value, and name the fix
+  for an unsafe key file.
+
+### Fixed
+
+- Reject C1 control characters in task text and identifiers, because U+009B is
+  the 8-bit CSI introducer and an embedded `ESC[201~` could close the Herdr
+  bracketed paste early ([#2](https://github.com/boriscardano/herdr-jev-router/pull/2)).
+
 ## [0.1.0] - 2026-09-23
 
 ### Added
@@ -52,5 +73,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Herdr CLI output is discarded or bounded, the pane split reply is size
   checked, and a closed stdout pipe is handled without a traceback.
 
-[Unreleased]: https://github.com/boriscardano/herdr-jev-router/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/boriscardano/herdr-jev-router/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/boriscardano/herdr-jev-router/releases/tag/v0.1.1
 [0.1.0]: https://github.com/boriscardano/herdr-jev-router/releases/tag/v0.1.0

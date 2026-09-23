@@ -520,7 +520,7 @@ def test_doctor_validates_credentials_permissions_files_and_commands(
     result = json.loads(stdout.getvalue())
     assert result["ok"] is True
     assert result["checks"] == {
-        "credential": {"ok": True},
+        "credential": {"ok": True, "source": "environment"},
         "state_directory": {"ok": True},
         "router_files": {
             "ok": True,
@@ -588,7 +588,10 @@ def test_doctor_fails_safely_and_never_prints_secret_or_paths(tmp_path: Path) ->
     assert code == 1
     result = json.loads(stdout.getvalue())
     assert result["ok"] is False
-    assert result["checks"]["credential"] == {"ok": True}
+    assert result["checks"]["credential"] == {
+        "ok": True,
+        "source": "environment",
+    }
     assert result["checks"]["state_directory"] == {"ok": False}
     assert result["checks"]["router_files"] == {
         "ok": False,
