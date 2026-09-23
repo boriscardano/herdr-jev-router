@@ -25,7 +25,6 @@ from typesafe_sdk import (
 )
 
 from herdr_jev_router.models import ProviderCapacity
-from herdr_jev_router.policy import route_eligible
 
 _MODEL = "jev-latest"
 # Pin the TypeSafe endpoint so TYPESAFE_BASE_URL cannot redirect the key to a
@@ -159,21 +158,16 @@ def build_jev_request(
         capacities_snapshot
     ):
         raise JevError("invalid_capacity", "Jev capacity contains a duplicate harness")
-    eligible_capacities = route_eligible(capacities_snapshot)
-    if not eligible_capacities:
-        raise JevError("no_eligible_provider", "Jev has no eligible provider")
+    if not capacities_snapshot:
+        raise JevError("no_eligible_provider", "Jev has no launchable provider")
 
     harness_criteria = {
         capacity.harness.value: _HARNESS_DESCRIPTIONS[capacity.harness.value]
-        for capacity in eligible_capacities
+        for capacity in capacities_snapshot
     }
     questions: dict[str, Choice] = {
         "harness": Choice(
-            instructions=(
-                "Which harness is the better fit for this delegated task? When "
-                "more than one harness fits, prefer the provider with more "
-                "remaining quota."
-            ),
+            instructions=("Which harness is the better fit for this delegated task?"),
             criteria=harness_criteria,
         ),
         "claude_model": Choice(
@@ -206,11 +200,10 @@ def build_jev_request(
         "capacity": {
             capacity.harness.value: {
                 "state": capacity.state.value,
-                "penalty": capacity.penalty,
                 "age_hours": capacity.age_hours,
                 **capacity.quota.to_dict(),
             }
-            for capacity in eligible_capacities
+            for capacity in capacities_snapshot
         },
     }
     return JevRequest(state=state, questions=questions)

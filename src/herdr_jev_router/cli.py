@@ -25,18 +25,8 @@ from herdr_jev_router.harness import (
     harness_availability,
 )
 from herdr_jev_router.jev import JevRequest, build_jev_request, route_with_jev
-from herdr_jev_router.models import (
-    CapacityState,
-    Effort,
-    Harness,
-    ProviderCapacity,
-    QuotaDetail,
-)
-from herdr_jev_router.policy import (
-    UNKNOWN_CAPACITY_PENALTY,
-    RoutingPolicyError,
-    launch_profile,
-)
+from herdr_jev_router.models import Effort, Harness, ProviderCapacity
+from herdr_jev_router.policy import RoutingPolicyError, launch_profile
 from herdr_jev_router.quota import (
     CapacityAssessment,
     assess_capacity,
@@ -400,7 +390,6 @@ def main(
                 request_id=request_id,
                 availability=availability,
             ),
-            availability,
         )
         return 0
     except _ConfigurationError:
@@ -952,26 +941,24 @@ def _capacity_snapshot(
     assessments: Mapping[Harness, CapacityAssessment],
     enabled: frozenset[Harness],
 ) -> tuple[ProviderCapacity, ...]:
-    """Attach quota numbers and penalties, forcing disabled harnesses to exhausted."""
+    """Keep every harness that can be launched here, with its quota as information.
 
-    capacities = tuple(
+    A harness that is not installed, or OpenCode/Pi without opt-in configuration,
+    cannot be started, so it is not a choice for Jev. Every launchable harness is
+    kept whatever its quota; Jev decides whether to use it.
+    """
+
+    return tuple(
         ProviderCapacity(
             harness,
-            assessment.state if harness in enabled else CapacityState.EXHAUSTED,
-            (
-                UNKNOWN_CAPACITY_PENALTY
-                if harness in enabled and assessment.state is CapacityState.UNKNOWN
-                else 0
-            ),
-            assessment.quota if harness in enabled else QuotaDetail(),
-            assessment.reason if harness in enabled else None,
-            assessment.age_hours if harness in enabled else None,
+            assessment.state,
+            assessment.quota,
+            assessment.reason,
+            assessment.age_hours,
         )
         for harness, assessment in assessments.items()
+        if harness in enabled
     )
-    # The critical fallback penalty is applied in recommend(), the single
-    # routing path, so the audit and the Jev state always agree.
-    return capacities
 
 
 def _capacity_snapshot_for(
@@ -988,11 +975,7 @@ def _bounded_string(value: object, *, maximum: int) -> str:
     return value
 
 
-def _write_explain(
-    output: TextIO,
-    result: _ExplainResult,
-    availability: HarnessAvailability,
-) -> None:
+def _write_explain(output: TextIO, result: _ExplainResult) -> None:
     """Print one human-readable recommendation without starting anything."""
 
     if result.request is not None:
@@ -1005,7 +988,7 @@ def _write_explain(
         f"effort: {decision.effort.value}",
     ]
     lines.extend(
-        f"capacity {capacity.harness.value}: {_capacity_label(capacity, availability)}"
+        f"capacity {capacity.harness.value}: {_capacity_label(capacity)}"
         for capacity in recommendation.capacities
     )
     _write_output(output, "\n".join(lines) + "\n")
@@ -1036,22 +1019,12 @@ def _jev_request_document(request: JevRequest) -> dict[str, object]:
     }
 
 
-def _capacity_label(
-    capacity: ProviderCapacity, availability: HarnessAvailability
-) -> str:
-    """Explain one capacity line, distinguishing an unavailable harness."""
+def _capacity_label(capacity: ProviderCapacity) -> str:
+    """Explain one capacity line, including a critical provider's reason."""
 
-    harness = capacity.harness
-    if harness in availability.enabled:
-        if capacity.reason is not None:
-            return f"{capacity.state.value} ({capacity.reason})"
-        return capacity.state.value
-    if harness not in availability.detected:
-        return "not installed"
-    variable = OPT_IN_VARIABLES.get(harness)
-    if variable is None:
-        return "not enabled"
-    return f"not enabled (set {variable})"
+    if capacity.reason is not None:
+        return f"{capacity.state.value} ({capacity.reason})"
+    return capacity.state.value
 
 
 def _write_denial(output: TextIO, request_id: str | None, code: str) -> None:

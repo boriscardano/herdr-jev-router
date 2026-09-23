@@ -150,11 +150,10 @@ def _number(value: object, name: str) -> float:
 
 @dataclass(frozen=True, slots=True)
 class ProviderCapacity:
-    """Represent one provider's routing state, penalty, quota, and cache age."""
+    """Represent one provider's routing state, quota, age, and critical reason."""
 
     harness: Harness
     state: CapacityState
-    penalty: int = 0
     quota: QuotaDetail = QuotaDetail()
     reason: str | None = None
     age_hours: float | None = None
@@ -164,21 +163,10 @@ class ProviderCapacity:
             raise TypeError("harness must be a Harness")
         if not isinstance(self.state, CapacityState):
             raise TypeError("state must be a CapacityState")
-        if type(self.penalty) is not int:
-            raise TypeError("penalty must be an integer")
         if not isinstance(self.quota, QuotaDetail):
             raise TypeError("quota must be a QuotaDetail")
         if self.age_hours is not None and _number(self.age_hours, "age_hours") < 0:
             raise ValueError("age_hours must not be negative")
-        if self.state is CapacityState.UNKNOWN and self.penalty <= 0:
-            raise ValueError("unknown capacity requires a penalty")
-        if self.state is CapacityState.CRITICAL and self.penalty < 0:
-            raise ValueError("critical capacity penalty must not be negative")
-        if (
-            self.state not in {CapacityState.UNKNOWN, CapacityState.CRITICAL}
-            and self.penalty != 0
-        ):
-            raise ValueError("only unknown or critical capacity may have a penalty")
         if self.reason is not None and (
             not isinstance(self.reason, str) or not self.reason
         ):

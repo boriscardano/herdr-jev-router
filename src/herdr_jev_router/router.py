@@ -18,12 +18,7 @@ from herdr_jev_router.models import (
     ProviderCapacity,
     RoutingDecision,
 )
-from herdr_jev_router.policy import (
-    RoutingPolicyError,
-    apply_critical_fallback,
-    route_eligible,
-    validate_decision,
-)
+from herdr_jev_router.policy import RoutingPolicyError, validate_decision
 
 _ANSWER_NAMES = (
     "harness",
@@ -76,9 +71,9 @@ async def recommend(
     """Call Jev once and durably return the validated recommendation."""
 
     constraints_snapshot = dict(constraints)
-    # The critical fallback is hard policy, applied in the single routing path
-    # so every caller and the audit see the same effective penalties.
-    capacities_snapshot = apply_critical_fallback(tuple(capacities))
+    # The caller already removed harnesses that cannot be launched. Jev decides
+    # among everything else, whatever the quota says.
+    capacities_snapshot = tuple(capacities)
     record = _v2_record(
         phase="recommendation",
         request_id=request_id,
@@ -87,10 +82,10 @@ async def recommend(
         constraints=constraints_snapshot,
         capacities=capacities_snapshot,
     )
-    if not route_eligible(capacities_snapshot):
+    if not capacities_snapshot:
         record["error_category"] = "capacity"
         _persist(audit_path, record)
-        raise RouterError("no_eligible_provider", "no eligible provider")
+        raise RouterError("no_eligible_provider", "no launchable provider")
     try:
         jev_result = await jev_callable(
             task=task,
@@ -174,7 +169,6 @@ def _v2_record(
             "capacity": {
                 capacity.harness.value: {
                     "state": capacity.state.value,
-                    "penalty": capacity.penalty,
                     "age_hours": capacity.age_hours,
                     **capacity.quota.to_dict(),
                     "reason": capacity.reason,
@@ -201,9 +195,7 @@ def _jev_audit(
     answers: dict[str, object] = {}
     expected_labels = {
         **_EXPECTED_LABELS,
-        "harness": frozenset(
-            capacity.harness.value for capacity in route_eligible(capacities)
-        ),
+        "harness": frozenset(capacity.harness.value for capacity in capacities),
     }
     for answer_id in _ANSWER_NAMES:
         answer = result.answers[answer_id]

@@ -868,7 +868,7 @@ def test_spawn_fails_closed_when_audit_write_fails(
     assert read_log(log) == []
 
 
-def test_spawn_fails_closed_when_every_provider_is_exhausted(
+def test_spawn_offers_exhausted_providers_to_jev(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     executable, log = fake_herdr(tmp_path, monkeypatch)
@@ -881,21 +881,23 @@ def test_spawn_fails_closed_when_every_provider_is_exhausted(
             remaining=0,
             now=1_000,
         )
-    called = False
+    captured: dict[str, object] = {}
 
     async def fake_jev(**kwargs: object) -> JevRoutingResult:
-        nonlocal called
-        called = True
+        captured.update(kwargs)
         return jev_result()
 
     code, output = run_spawn(
         spawn_argv(), tmp_path, herdr_command=executable, jev_callable=fake_jev
     )
 
-    assert code == 1
-    assert denial(output)["code"] == "no_eligible_provider"
-    assert read_log(log) == []
-    assert called is False
+    # Exhausted is information for Jev, not a hard filter: all four providers
+    # reach Jev and Jev's choice still starts.
+    assert code == 0
+    capacities = captured["capacities"]
+    assert {value.state.value for value in capacities} == {"exhausted"}
+    assert len(capacities) == 4
+    assert read_log(log)[0]["argv"][:3] == ["agent", "start", "worker"]
 
 
 def test_spawn_does_not_send_task_when_start_fails(

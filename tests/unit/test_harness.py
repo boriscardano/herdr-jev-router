@@ -388,31 +388,9 @@ def test_spawn_denies_without_calling_jev_when_no_harness_is_installed(
     assert called is False
 
 
-@pytest.mark.parametrize(
-    "installed, expected_states",
-    [
-        (
-            ("claude",),
-            {
-                "claude": "unknown",
-                "codex": "exhausted",
-                "opencode": "exhausted",
-                "pi": "exhausted",
-            },
-        ),
-        (
-            ("codex",),
-            {
-                "claude": "exhausted",
-                "codex": "unknown",
-                "opencode": "exhausted",
-                "pi": "exhausted",
-            },
-        ),
-    ],
-)
-def test_spawn_excludes_every_unavailable_harness_before_jev(
-    tmp_path: Path, installed: tuple[str, ...], expected_states: dict[str, str]
+@pytest.mark.parametrize("installed", [("claude",), ("codex",)])
+def test_spawn_only_offers_installed_harnesses_to_jev(
+    tmp_path: Path, installed: tuple[str, ...]
 ) -> None:
     async def fake_jev(**kwargs: object) -> JevRoutingResult:
         raise RuntimeError("stop after capturing capacities")
@@ -428,9 +406,11 @@ def test_spawn_excludes_every_unavailable_harness_before_jev(
     assert json.loads(output)["denial"]["code"] == "jev_failed"
     assert len(calls) == 1
     capacities = calls[0]["capacities"]
-    assert {value.harness.value: value.state.value for value in capacities} == (
-        expected_states
-    )
+    # An uninstalled harness is not a choice at all; it is absent, not
+    # rewritten to some quota state.
+    assert {value.harness.value: value.state.value for value in capacities} == {
+        installed[0]: "unknown"
+    }
     assert argv == []
 
 
@@ -578,7 +558,7 @@ def test_spawn_uses_the_configured_provider_and_models_when_opted_in(
     assert len(calls) == 1
 
 
-def test_explain_says_why_a_harness_is_unavailable(tmp_path: Path) -> None:
+def test_explain_only_lists_launchable_harnesses(tmp_path: Path) -> None:
     async def fake_jev(**kwargs: object) -> JevRoutingResult:
         return jev_result(Harness.CLAUDE, (Harness.CLAUDE,))
 
@@ -591,11 +571,10 @@ def test_explain_says_why_a_harness_is_unavailable(tmp_path: Path) -> None:
 
     assert code == 0
     assert "capacity claude: unknown" in output
-    assert "capacity codex: not installed" in output
-    assert "capacity opencode: not enabled (set HERDR_JEV_ROUTER_OPENCODE)" in output
-    assert "capacity pi: not installed" in output
-    assert "capacity opencode: exhausted" not in output
-    assert "capacity pi: exhausted" not in output
+    # Codex and Pi are not installed and OpenCode has no opt-in, so none of
+    # them can be launched and none is offered as a capacity line.
+    for name in ("codex", "opencode", "pi"):
+        assert f"capacity {name}:" not in output
     assert len(calls) == 1
 
 
