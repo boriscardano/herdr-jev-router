@@ -86,7 +86,7 @@ and close it as described below.
 | Exit | Denial code | Meaning |
 | --- | --- | --- |
 | 0 | none | `spawn` started the child and delivered the task, or `explain` printed the review. |
-| 1 | `no_eligible_provider` | Every provider is exhausted. Audited. |
+| 1 | `no_eligible_provider` | No harness is installed and enabled. Audited. |
 | 1 | `jev_failed` | The Jev call failed. Audited. |
 | 1 | `validation_failed` | Jev's answers failed validation. Audited. |
 | 1 | `audit_failed` | The audit write failed. Nothing started. |

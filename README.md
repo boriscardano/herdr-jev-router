@@ -132,16 +132,17 @@ Missing or expired quota is `unknown`, never exhausted. See
 [docs/quota-sources.md](docs/quota-sources.md) for the field rules and the
 freshness limits.
 
-Jev receives the real numbers, not just a label: for every eligible provider it
-gets the remaining percent and hours-to-reset for the 5-hour and weekly
+Jev receives the real numbers, not just a label: for every launchable provider
+it gets the remaining percent and hours-to-reset for the 5-hour and weekly
 windows, mapped by window length so Claude and Codex both work, plus
 `age_hours`, the rounded age of the cache. Any unexpired cache is used even
 when it is labeled stale, because a weekly window cannot recover between
 refreshes. A provider with under 10 percent left in a window that resets more
-than 12 hours away is `critical` and is removed before Jev like an exhausted
-one, unless it is the only provider left, in which case it stays eligible with
-a penalty. `usage`, `explain`, and `doctor --human` show `critical` with the
-reason, and the audit record keeps the same numbers.
+than 12 hours away is `critical`. Critical, exhausted, and unknown are all
+information for Jev, not filters: every installed and enabled provider is
+offered with its numbers and Jev decides. `usage`, `explain`, and
+`doctor --human` show the state with the reason, and the audit record keeps
+the same numbers.
 
 ## Use
 
@@ -181,6 +182,33 @@ task may contain newline and tab, but any other C0 or C1 control character, a
 lone surrogate, or text with no visible character after whitespace and Unicode
 format characters are removed is rejected with `invalid_request`. See
 [docs/advisory-mode.md](docs/advisory-mode.md) for the failure codes and limits.
+
+## Steer the routing
+
+The router sends every launchable provider to Jev with its real quota numbers
+and applies no quota-based limits of its own. Write your standing preferences
+in plain words at `$XDG_CONFIG_HOME/herdr-jev-router/preferences.md` (default
+`~/.config/herdr-jev-router/preferences.md`). The file is plain text, must be
+owned by you, is read without following symlinks, and is capped at 8 KiB. When
+it is missing, the router sends a short built-in default that prefers the
+cheapest model that can do the task well, avoids a provider whose quota is
+nearly used up, and reserves higher effort for hard tasks.
+
+```markdown
+Use deepseek-v4.1-flash through Pi as the workhorse for routine tasks, it is
+capable and cheap.
+
+Prefer Codex terra for hard implementation work, and Claude opus only when the
+task needs it.
+
+Avoid any provider whose weekly quota is under 10 percent unless nothing else
+fits.
+```
+
+`explain --show-request` prints these preferences as part of the Jev request.
+The audit never stores the text, only whether a file or the default was used
+and its length. An unsafe or oversized file makes the command fail closed with
+`invalid_preferences`.
 
 ## Make your master agent use it
 

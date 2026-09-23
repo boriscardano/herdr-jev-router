@@ -70,7 +70,7 @@ A failure prints one JSON denial on stdout with `version`, `request_id` and
 
 | Code | Exit | What to do |
 | --- | --- | --- |
-| `no_eligible_provider` | 1 | No harness is installed or enabled, or all are exhausted. Enable one or free capacity, then retry. |
+| `no_eligible_provider` | 1 | No harness is installed and enabled. Install or enable one, then retry. |
 | `jev_failed` | 1 | The Jev call failed. Retry later. |
 | `validation_failed` | 1 | Jev answers failed validation. Retry, report a repeat. |
 | `audit_failed` | 1 | The audit write failed. Check the state dir. Nothing started. |

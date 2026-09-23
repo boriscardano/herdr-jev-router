@@ -39,7 +39,7 @@ command line.
 
 The one `system_one` call now sends six independent `Choice` questions:
 
-1. `harness`: the eligible harnesses.
+1. `harness`: the launchable harnesses.
 2. `claude_model`: `haiku`, `sonnet`, `opus`.
 3. `codex_model`: `luna`, `terra`, `sol`.
 4. `opencode_model`: `deepseek`, `glm`, `kimi`.
@@ -54,7 +54,7 @@ retained for validation and audit.
 
 `RoutingDecision` carries every branch model plus the selected harness and
 effort. `validate_decision` requires exactly the six answer keys, closed
-values, and a currently eligible harness. The audit's `recommended_decision`
+values, and a currently launchable harness. The audit's `recommended_decision`
 keeps the compact `{harness, model, effort}` shape, where `model` is the branch
 model for the selected harness.
 
@@ -72,10 +72,11 @@ assume that OpenCode and Pi run against one private subscription.
 
 Before any Jev call, `spawn` and `explain` detect harness executables on `PATH`
 through the same command lookup that `doctor` uses. A harness whose executable
-is missing is removed from the capacity snapshot exactly like an exhausted
-provider: it never appears in the Jev harness choices and can never be
-selected. When no harness is installed or enabled, routing fails closed with
-the stable `no_eligible_provider` code before Jev is called.
+is missing is absent from the capacity snapshot: it never appears in the Jev
+harness choices and can never be selected. Quota never removes a harness; a
+missing executable or a missing opt-in configuration is a launchability fact,
+not a routing limit. When no harness is installed and enabled, routing fails
+closed with the stable `no_eligible_provider` code before Jev is called.
 
 Claude Code and Codex need no configuration. They are enabled whenever their
 executable is found. OpenCode and Pi are opt in because their provider and

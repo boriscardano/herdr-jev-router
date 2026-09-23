@@ -68,8 +68,12 @@ symlinked path or a file it does not own, and it treats an unsafe cache as
 `unknown`. The audit is written before a child is started. If Jev, input
 validation, decision validation, audit writing, or provider state fails, the
 router returns a stable denial and starts no child. Unknown quota is distinct
-from exhausted quota. Only valid zero remaining capacity or an explicit reached
-signal removes a provider before Jev.
+from exhausted quota. No quota state removes a provider before Jev: the only
+providers absent from the Jev request are those that cannot be launched here,
+namely a harness with no executable or an opt-in harness without its
+configuration. The optional plain-text preferences file is read without
+following symlinks, must be owned by this user, and is never stored in the
+audit.
 
 `spawn` waits for the stock `herdr agent start` readiness check and delivers
 the task exactly once. A readiness timeout or changed pane state denies the
