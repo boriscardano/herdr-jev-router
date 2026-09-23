@@ -11,7 +11,7 @@ from httpx2 import MockTransport, Request, Response
 import herdr_jev_router.cli as cli_module
 import herdr_jev_router.router as router_module
 from herdr_jev_router.cli import main
-from herdr_jev_router.jev import JevRoutingResult, route_with_jev
+from herdr_jev_router.jev import JevError, JevRoutingResult, route_with_jev
 from herdr_jev_router.policy import route_eligible
 from herdr_jev_router.quota import QuotaSnapshot, QuotaWindow, write_cache
 
@@ -514,6 +514,25 @@ def test_explain_fails_closed_with_router_error_code_and_no_secret(
     }
     assert "SENTINEL" not in output
     assert "SENTINEL" not in (tmp_path / "audit.jsonl").read_text()
+
+
+def test_explain_show_request_prints_nothing_when_jev_fails(tmp_path: Path) -> None:
+    async def failing_jev(**kwargs: object) -> JevRoutingResult:
+        raise JevError("connection", "secret provider body")
+
+    code, output = invoke_explain(
+        tmp_path,
+        failing_jev,
+        extra=("--show-request",),
+        environ={"TYPESAFE_API_KEY": "SENTINEL_TYPESAFE_KEY"},
+    )
+
+    assert code == 1
+    assert json.loads(output)["denial"]["code"] == "jev_failed"
+    assert "recommended harness:" not in output
+    assert "questions" not in output
+    assert "secret provider body" not in output
+    assert "SENTINEL" not in output
 
 
 def test_explain_fails_closed_when_the_audit_write_fails(
