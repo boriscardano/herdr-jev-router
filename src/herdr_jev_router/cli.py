@@ -54,6 +54,7 @@ _START_TIMEOUT_SECONDS = 60.0
 _PROMPT_TIMEOUT_SECONDS = 30.0
 _SPLIT_TIMEOUT_SECONDS = 30.0
 _CAPTURED_HERDR_BYTES = 64 * 1024
+_KEY_FILE_MAX_BYTES = 4096
 _CONSTRAINT_NAMES = ("read_only", "worktree", "network_required")
 _ROLES = frozenset({"worker", "reviewer", "debugger", "researcher"})
 
@@ -86,6 +87,104 @@ class _UsageError(ValueError):
 
 class _ConfigurationError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class _KeyResolution:
+    """Describe the Jev credential found for one router process.
+
+    `source` is `environment` or `key file` when a key was found, otherwise
+    `None`. `problem` explains an unsafe key file so `doctor` can say what to
+    fix; it never contains the key itself.
+    """
+
+    key: str | None
+    source: str | None
+    problem: str | None
+
+
+def _key_file_path(environment: Mapping[str, str]) -> Path:
+    """Return the configured owner-only key file path."""
+
+    configured = environment.get("XDG_CONFIG_HOME")
+    root = Path(configured) if configured else Path.home() / ".config"
+    return root / "herdr-jev-router" / "key"
+
+
+def _resolve_key(environment: Mapping[str, str]) -> _KeyResolution:
+    """Return the Jev credential from the environment or the owner-only file.
+
+    The environment wins when it holds a non-empty value. Otherwise the key
+    file is read only when it is a regular file owned by this user with mode
+    0600, inside a parent directory this user owns that is not group- or
+    world-writable. An unsafe, missing, or empty file yields no key and fails
+    closed exactly like a missing environment variable.
+    """
+
+    environment_key = environment.get("TYPESAFE_API_KEY")
+    if environment_key is not None and environment_key.strip():
+        return _KeyResolution(environment_key.strip(), "environment", None)
+    return _read_key_file(_key_file_path(environment))
+
+
+def _read_key_file(path: Path) -> _KeyResolution:
+    """Read and validate the owner-only key file without following symlinks."""
+
+    try:
+        parent = path.parent.stat()
+    except OSError:
+        return _KeyResolution(None, None, None)
+    if (
+        not stat.S_ISDIR(parent.st_mode)
+        or parent.st_uid != os.geteuid()
+        or parent.st_mode & 0o022
+    ):
+        return _KeyResolution(
+            None,
+            "key file",
+            "key file directory must be owned by you and not group- or world-writable",
+        )
+    try:
+        # O_NOFOLLOW plus fstat close the race between a pre-check and the open,
+        # matching the owner-only cache read in quota.py. A symlink fails here
+        # instead of resolving to a file an attacker controls.
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return _KeyResolution(None, None, None)
+    except OSError:
+        return _KeyResolution(
+            None,
+            "key file",
+            "key file must be a regular file owned by you with mode 600",
+        )
+    try:
+        details = os.fstat(descriptor)
+        if not stat.S_ISREG(details.st_mode):
+            return _KeyResolution(
+                None,
+                "key file",
+                "key file must be a regular file owned by you with mode 600",
+            )
+        if details.st_uid != os.geteuid():
+            return _KeyResolution(None, "key file", "key file owner must be you")
+        if stat.S_IMODE(details.st_mode) != 0o600:
+            return _KeyResolution(
+                None,
+                "key file",
+                "key file must have mode 600, run chmod 600 on the key file",
+            )
+        data = os.read(descriptor, _KEY_FILE_MAX_BYTES + 1)
+    finally:
+        os.close(descriptor)
+    if len(data) > _KEY_FILE_MAX_BYTES:
+        return _KeyResolution(None, "key file", "key file is too large")
+    try:
+        key = data.decode("utf-8").strip()
+    except UnicodeDecodeError:
+        return _KeyResolution(None, "key file", "key file must contain UTF-8 text")
+    if not key:
+        return _KeyResolution(None, None, None)
+    return _KeyResolution(key, "key file", None)
 
 
 class _ArgumentParser(argparse.ArgumentParser):
@@ -125,8 +224,8 @@ def _parser(environment: Mapping[str, str]) -> argparse.ArgumentParser:
             "Ask Jev for one child-agent decision and start it with the stock "
             "`herdr agent start` CLI, then deliver TASK once with "
             "`herdr agent prompt`. Advisory only: it cannot stop a direct "
-            "`herdr agent start`. Jev credentials come only from "
-            "TYPESAFE_API_KEY."
+            "`herdr agent start`. Jev credentials come from TYPESAFE_API_KEY or "
+            "the owner-only key file at $XDG_CONFIG_HOME/herdr-jev-router/key."
         ),
     )
     explain_parser = commands.add_parser(
@@ -135,7 +234,8 @@ def _parser(environment: Mapping[str, str]) -> argparse.ArgumentParser:
         description=(
             "Ask Jev for one child-agent decision and print a human-readable "
             "review. It audits the decision but never starts an agent. Jev "
-            "credentials come only from TYPESAFE_API_KEY."
+            "credentials come from TYPESAFE_API_KEY or the owner-only key file "
+            "at $XDG_CONFIG_HOME/herdr-jev-router/key."
         ),
     )
     spawn_parser.add_argument("--name", required=True, help="Herdr agent name")
@@ -325,7 +425,14 @@ def _doctor(
     now: float,
     availability: HarnessAvailability,
 ) -> dict[str, object]:
-    credential_ok = bool(environment.get("TYPESAFE_API_KEY", "").strip())
+    resolution = _resolve_key(environment)
+    credential_ok = resolution.key is not None
+    credential: dict[str, object] = {
+        "ok": credential_ok,
+        "source": resolution.source,
+    }
+    if resolution.problem is not None:
+        credential["problem"] = resolution.problem
     state_ok = _path_has_mode(state_dir, expected_mode=0o700, directory=True)
     router_files = {
         "claude_cache": _file_status(state_dir / CLAUDE_CACHE_NAME),
@@ -349,7 +456,7 @@ def _doctor(
     return {
         "ok": ok,
         "checks": {
-            "credential": {"ok": credential_ok},
+            "credential": credential,
             "state_directory": {"ok": state_ok},
             "router_files": {"ok": router_files_ok, **router_files},
             "providers": _usage(state_dir, now=now, availability=availability),
@@ -375,11 +482,13 @@ def _write_doctor_human(output: TextIO, result: Mapping[str, object]) -> None:
     providers = cast("Mapping[str, Mapping[str, Any]]", checks["providers"])
     lines: list[str] = []
     if checks["credential"]["ok"]:
-        lines.append("TypeSafe key: ok")
+        lines.append(f"TypeSafe key: ok (from {checks['credential']['source']})")
+    elif checks["credential"].get("problem") is not None:
+        lines.append(f"TypeSafe key: {checks['credential']['problem']}")
     else:
         lines.append(
-            "TypeSafe key: missing, set TYPESAFE_API_KEY in the environment you "
-            "run herdr-jev-router from"
+            "TypeSafe key: missing, set TYPESAFE_API_KEY or write the key file "
+            "at $XDG_CONFIG_HOME/herdr-jev-router/key"
         )
     if checks["commands"]["herdr"]:
         lines.append("herdr: ok")
@@ -513,8 +622,8 @@ def _recommend_decision(
 ) -> RecommendationResult:
     """Ask Jev for one audited advisory decision without starting anything."""
 
-    api_key = environment.get("TYPESAFE_API_KEY")
-    if not api_key:
+    api_key = _resolve_key(environment).key
+    if api_key is None:
         raise _ConfigurationError
     capacities = _capacity_snapshot_for(state_dir, clock, enabled=availability.enabled)
 
