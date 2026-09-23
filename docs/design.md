@@ -96,10 +96,37 @@ Code status-line document, and `herdr-jev-quota-codex` refreshes Codex quota
 through the local app-server interface. A missing or malformed cache is
 `unknown`. A harness that is missing from `PATH` or not enabled is forced to
 `exhausted`, so it never reaches the Jev choices. Only a valid zero remaining
-window or
-an explicit reached signal is `exhausted`, and an exhausted provider is removed
-before Jev. Unknown providers stay eligible with a deterministic penalty of 1.
-See [quota-sources.md](quota-sources.md).
+window or an explicit reached signal is `exhausted`. Unknown providers stay
+eligible with a deterministic penalty of 1. See
+[quota-sources.md](quota-sources.md).
+
+## Capacity policy
+
+The router derives two quota numbers per provider window from the normalized
+cache, never from provider-specific window names. A window of about 5 hours
+fills the 5-hour slot and a window of about 7 days fills the weekly slot, so
+Claude's `five_hour`/`seven_day` and Codex's `primary`/`secondary` map the same
+way. The state is one of `surplus`, `on_pace`, `conserve`, `unknown`,
+`critical`, or `exhausted`:
+
+- `unknown`: the cache is missing, expired, or stale. Jev receives `null` for
+every quota number, never a guess. Unknown providers stay eligible with penalty
+1.
+- `exhausted`: a valid zero-remaining window or an explicit reached signal.
+Exhausted providers are always removed before Jev.
+- `critical`: a known fresh window has under 10 percent remaining and resets
+more than 12 hours from now. Critical providers are removed before Jev exactly
+like exhausted ones. When removing them would leave no provider at all, they
+stay eligible with penalty 2, so the user always has a route.
+- `surplus`, `on_pace`, `conserve`: the existing pace comparison against the
+remaining fraction of each window.
+
+For every eligible provider, the Jev state carries `state`, `penalty`,
+`five_hour_remaining_percent`, `five_hour_resets_in_hours`,
+`weekly_remaining_percent`, and `weekly_resets_in_hours`. The reset values are
+relative hours, not raw timestamps. The harness question tells Jev to prefer
+the provider with more remaining quota when more than one fits.
+
 
 ## Trust boundaries
 
@@ -158,7 +185,7 @@ fsynced, append-only JSONL writer:
   "request_id": "0f8c...",
   "timestamp": 1780000000,
   "request": {"role": "reviewer", "constraints": {"read_only": true, "worktree": false, "network_required": false}},
-  "capacity": {"claude": {"state": "on_pace", "penalty": 0}, "codex": {"state": "unknown", "penalty": 1}, "opencode": {"state": "unknown", "penalty": 1}, "pi": {"state": "unknown", "penalty": 1}},
+  "capacity": {"claude": {"state": "on_pace", "penalty": 0, "five_hour_remaining_percent": 85, "five_hour_resets_in_hours": 2, "weekly_remaining_percent": 35, "weekly_resets_in_hours": 100, "reason": null}, "codex": {"state": "critical", "penalty": 0, "five_hour_remaining_percent": null, "five_hour_resets_in_hours": null, "weekly_remaining_percent": 6, "weekly_resets_in_hours": 38, "reason": "codex weekly 6% left, resets in 38h"}},
   "jev": {"model": "jev-1.13.0", "answers": {"harness": {"label": "codex", "probabilities": {"claude": 0.4, "codex": 0.6}, "confidence": 0.5}}},
   "recommended_decision": {"harness": "codex", "model": "terra", "effort": "high"},
   "error_category": null
@@ -166,7 +193,9 @@ fsynced, append-only JSONL writer:
 ```
 
 The example abbreviates the `jev.answers` map. The record always carries all
-four providers and all six Jev answers.
+four providers and all six Jev answers. The capacity snapshot records the same
+quota numbers that were sent to Jev, so a later reader can explain why a
+provider was removed or chosen.
 
 The record is written before any child starts. Failures carry an
 `error_category` such as `capacity`, `jev`, `validation`, or `audit` and no

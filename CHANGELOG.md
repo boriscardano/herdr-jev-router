@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Jev now receives the real remaining quota for every eligible provider: the
+  remaining percent and hours-to-reset for the 5-hour and weekly windows, mapped
+  by window length so Claude's `five_hour`/`seven_day` and Codex's
+  `primary`/`secondary` both work. Stale or missing windows are `null`, never a
+  guess, and the harness question tells Jev to prefer the provider with more
+  remaining quota when a task fits either.
+- A new `critical` capacity state: a fresh window with under 10 percent
+  remaining that resets more than 12 hours from now. Critical providers are
+  removed before Jev like exhausted ones, unless every remaining provider would
+  be removed, in which case they stay eligible with a penalty so the user always
+  has a route. `usage`, `explain`, and `doctor --human` show `critical` with the
+  reason, and the audit record keeps the same quota numbers.
+
 ## [0.1.2] - 2026-09-23
 
 ### Changed

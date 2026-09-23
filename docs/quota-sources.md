@@ -149,8 +149,10 @@ The current parser:
 
 The classifier uses valid future-reset windows. A valid zero remaining window or
 an explicit reached state makes Codex `exhausted`. Missing, malformed, or
-expired source data becomes `unknown`. The implementation does not treat the
-10,080-minute weekly window as the only possible Codex quota.
+expired source data becomes `unknown`. A fresh window under 10 percent
+remaining that resets more than 12 hours from now makes Codex `critical`. The
+implementation does not treat the 10,080-minute weekly window as the only
+possible Codex quota.
 
 ## Claude Code source
 
@@ -237,7 +239,7 @@ The two sources produce the same minimal shape:
 
 `observed_at` is the source observation time when the source provides one. For status-line input, use the local capture time because the feed does not provide a quota-observation timestamp. `captured_at` is the local write time. Neither timestamp may be advanced when a refresh fails.
 
-The cache schema must reject unknown top-level fields and invalid percentages. A provider result with no valid window is `unknown`. The capacity layer, not the parser, owns the `surplus`, `on_pace`, `conserve`, `unknown`, and `exhausted` labels described in `docs/design.md`.
+The cache schema must reject unknown top-level fields and invalid percentages. A provider result with no valid window is `unknown`. The capacity layer, not the parser, owns the `surplus`, `on_pace`, `conserve`, `unknown`, `critical`, and `exhausted` labels described in `docs/design.md`.
 
 ## Cache and freshness behavior
 
