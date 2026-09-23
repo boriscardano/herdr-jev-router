@@ -7,11 +7,10 @@ remaining subscription capacity. It runs on stock Herdr through the stock
 patch. It is advisory. Herdr has no routing hook, so a direct `herdr agent
 start` still bypasses the router.
 
-[![Herdr Jev Router trailer](docs/assets/trailer.gif)](https://github.com/boriscardano/herdr-jev-router/releases/latest/download/herdr-jev-router-trailer.mp4)
+https://github.com/user-attachments/assets/df4027c9-d009-4083-b310-fac505ad3bd2
 
 Real run on stock Herdr: asked in plain language to do three things in parallel,
 a master agent found the skill on its own and every child was routed by Jev.
-[Watch the full-quality video](https://github.com/boriscardano/herdr-jev-router/releases/latest/download/herdr-jev-router-trailer.mp4).
 
 ## Requirements
 
