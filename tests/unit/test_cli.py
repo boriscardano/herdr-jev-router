@@ -247,7 +247,20 @@ class _BrokenPipeOutput(io.StringIO):
         raise BrokenPipeError
 
 
-def test_explain_rejects_control_characters_in_the_task(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "task",
+    [
+        "escape\x1b[201~task",
+        "eight-bit-csi\x9b201~task",
+        "padding\x80task",
+        "nel\x85task",
+        "osc\x9d0;titletask",
+        "unit-separator\x9ftask",
+    ],
+)
+def test_explain_rejects_control_characters_in_the_task(
+    tmp_path: Path, task: str
+) -> None:
     called = False
 
     async def fake_jev(**kwargs: object) -> JevRoutingResult:
@@ -255,11 +268,28 @@ def test_explain_rejects_control_characters_in_the_task(tmp_path: Path) -> None:
         called = True
         return jev_result()
 
-    code, output = invoke_explain(tmp_path, fake_jev, task="escape\x1b[201~task")
+    code, output = invoke_explain(tmp_path, fake_jev, task=task)
 
     assert code == 2
     assert json.loads(output)["denial"]["code"] == "invalid_request"
     assert called is False
+
+
+def test_explain_allows_non_ascii_task_text(tmp_path: Path) -> None:
+    calls = 0
+
+    async def fake_jev(**kwargs: object) -> JevRoutingResult:
+        nonlocal calls
+        calls += 1
+        return jev_result()
+
+    code, output = invoke_explain(
+        tmp_path, fake_jev, task="Überprüfe die README\u00a0🚀"
+    )
+
+    assert code == 0
+    assert "recommended harness:" in output
+    assert calls == 1
 
 
 def test_a_broken_stdout_pipe_does_not_escape_as_a_traceback(

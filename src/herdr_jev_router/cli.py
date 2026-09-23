@@ -467,12 +467,15 @@ def _task_text(value: object) -> str:
     """Validate one advisory task before it reaches Jev or the Herdr CLI."""
 
     task = _bounded_string(value, maximum=256 * 1024)
-    # Newline and tab are legitimate task text. Every other C0 character, and
-    # DEL, can drive the child terminal instead. Stock Herdr delivers the task
-    # as a bracketed paste, so an embedded `ESC[201~` would close the paste
-    # region early and deliver the rest as raw keystrokes.
+    # Newline and tab are legitimate task text. Every other C0 character, plus
+    # DEL and the C1 range U+0080-U+009F, can drive the child terminal instead.
+    # U+009B is the 8-bit CSI introducer, so it must be blocked even though ESC
+    # is. Stock Herdr delivers the task as a bracketed paste, so an embedded
+    # `ESC[201~` would close the paste region early and deliver the rest as raw
+    # keystrokes.
     if any(
-        (ord(character) < 0x20 and character not in "\n\t") or ord(character) == 0x7F
+        (ord(character) < 0x20 and character not in "\n\t")
+        or 0x7F <= ord(character) <= 0x9F
         for character in task
     ):
         raise _RequestError
@@ -633,7 +636,12 @@ def _spawn_identifier(value: object) -> str:
     """Validate one agent name or pane id before it reaches the Herdr CLI."""
 
     identifier = _bounded_string(value, maximum=256)
-    if any(ord(character) < 0x20 or ord(character) == 0x7F for character in identifier):
+    # The spawn summary prints names and pane ids to this process's stdout, so
+    # the same C0, DEL and C1 rejection as `_task_text` applies here.
+    if any(
+        ord(character) < 0x20 or 0x7F <= ord(character) <= 0x9F
+        for character in identifier
+    ):
         raise _RequestError
     return identifier
 

@@ -346,6 +346,27 @@ def test_spawn_without_pane_fails_closed_when_the_split_response_is_invalid(
     assert [record["argv"][:2] for record in read_log(log)] == [["pane", "split"]]
 
 
+def test_spawn_fails_closed_when_the_split_pane_id_has_a_c1_control_character(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    split_response = (
+        '{"id":"cli:pane:split","result":{"type":"pane_info",'
+        '"pane":{"pane_id":"w9:p\u009b9"}}}'
+    )
+    executable, log = fake_herdr(tmp_path, monkeypatch, split_response=split_response)
+
+    async def fake_jev(**kwargs: object) -> JevRoutingResult:
+        return jev_result()
+
+    code, output = run_spawn(
+        spawn_argv(pane=None), tmp_path, herdr_command=executable, jev_callable=fake_jev
+    )
+
+    assert code == 1
+    assert denial(output)["code"] == "pane_split_failed"
+    assert [record["argv"][:2] for record in read_log(log)] == [["pane", "split"]]
+
+
 def test_spawn_without_pane_fails_closed_when_the_split_response_is_too_large(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -530,6 +551,11 @@ def test_spawn_rejects_a_null_task_before_starting(
         "delete\x7ftask",
         "vertical\x0btab",
         "form\x0cfeed",
+        "eight-bit-csi\x9b201~task",
+        "padding\x80task",
+        "nel\x85task",
+        "osc\x9d0;titletask",
+        "unit-separator\x9ftask",
     ],
 )
 def test_spawn_rejects_control_characters_in_the_task(
@@ -568,6 +594,82 @@ def test_spawn_allows_newline_and_tab_in_the_task(
 
     assert code == 0
     assert read_log(log)[1]["argv"] == ["agent", "prompt", "worker", task]
+
+
+@pytest.mark.parametrize(
+    ("name", "pane"),
+    [
+        ("work\x9ber", "w1:p2"),
+        ("worker", "w1:p\x852"),
+        ("worker", "w1:p\x9d2"),
+    ],
+)
+def test_spawn_rejects_c1_control_characters_in_name_and_pane(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    pane: str,
+) -> None:
+    executable, log = fake_herdr(tmp_path, monkeypatch)
+    called = False
+
+    async def fake_jev(**kwargs: object) -> JevRoutingResult:
+        nonlocal called
+        called = True
+        return jev_result()
+
+    code, output = run_spawn(
+        spawn_argv(name=name, pane=pane),
+        tmp_path,
+        herdr_command=executable,
+        jev_callable=fake_jev,
+    )
+
+    assert code == 2
+    assert denial(output)["code"] == "invalid_request"
+    assert read_log(log) == []
+    assert called is False
+
+
+def test_spawn_allows_non_ascii_task_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    executable, log = fake_herdr(tmp_path, monkeypatch)
+    task = "Überprüfe die README\u00a0🚀"
+
+    async def fake_jev(**kwargs: object) -> JevRoutingResult:
+        return jev_result()
+
+    code, _ = run_spawn(
+        spawn_argv(task), tmp_path, herdr_command=executable, jev_callable=fake_jev
+    )
+
+    assert code == 0
+    assert read_log(log)[1]["argv"] == ["agent", "prompt", "worker", task]
+
+
+def test_spawn_allows_non_ascii_name_and_pane(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    executable, log = fake_herdr(tmp_path, monkeypatch)
+    name = "wörker-Ü"
+    pane = "w1:p2"
+
+    async def fake_jev(**kwargs: object) -> JevRoutingResult:
+        return jev_result()
+
+    code, _ = run_spawn(
+        spawn_argv(name=name, pane=pane),
+        tmp_path,
+        herdr_command=executable,
+        jev_callable=fake_jev,
+    )
+
+    assert code == 0
+    started = read_log(log)[0]["argv"]
+    assert started[:3] == ["agent", "start", name]
+    pane_flag = started.index("--pane")
+    assert started[pane_flag + 1] == pane
 
 
 def test_spawn_tolerates_large_herdr_output(
