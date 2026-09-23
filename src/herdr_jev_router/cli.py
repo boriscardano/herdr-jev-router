@@ -178,6 +178,8 @@ def _read_key_file(path: Path) -> _KeyResolution:
                 "key file must have mode 600, run chmod 600 on the key file",
             )
         data = os.read(descriptor, _KEY_FILE_MAX_BYTES + 1)
+    except OSError:
+        return _KeyResolution(None, "key file", "key file could not be read safely")
     finally:
         os.close(descriptor)
     if len(data) > _KEY_FILE_MAX_BYTES:

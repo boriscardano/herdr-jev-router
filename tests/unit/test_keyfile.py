@@ -205,6 +205,34 @@ def test_owner_only_parent_directory_is_accepted(tmp_path: Path) -> None:
     assert result.problem is None
 
 
+def test_unreadable_key_file_fails_closed_as_configuration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_home = tmp_path / "config"
+    write_key(config_home, _SENTINEL)
+
+    def refuse(descriptor: int) -> object:
+        raise OSError("SENTINEL_READ_FAILURE")
+
+    monkeypatch.setattr(cli_module.os, "fstat", refuse)
+    stdout = io.StringIO()
+    code = main(
+        [
+            "explain",
+            "Review the authentication change.",
+            "--state-dir",
+            str(tmp_path / "state"),
+        ],
+        stdout=stdout,
+        environ={"XDG_CONFIG_HOME": os.fspath(config_home)},
+        command_finder=lambda name: f"/usr/bin/{name}",
+    )
+
+    assert code == 2
+    assert json.loads(stdout.getvalue())["denial"]["code"] == "configuration_failed"
+    assert "SENTINEL_READ_FAILURE" not in stdout.getvalue()
+
+
 def jev_result() -> JevRoutingResult:
     return JevRoutingResult(
         model="jev-test-1",
