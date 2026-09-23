@@ -6,11 +6,12 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from herdr_jev_router.models import CapacityState
+from herdr_jev_router.models import CapacityState, QuotaDetail
 from herdr_jev_router.quota import (
     CACHE_MAX_AGE_SECONDS,
     QuotaSnapshot,
     QuotaWindow,
+    assess_capacity,
     classify_capacity,
     owner_only_directory,
     provider_lock,
@@ -366,3 +367,188 @@ def test_expired_snapshot_is_unknown_even_outside_the_cache_reader() -> None:
         classify_capacity(expired, now=1_000 + CACHE_MAX_AGE_SECONDS)
         is CapacityState.UNKNOWN
     )
+
+
+def _snapshot_with_windows(
+    provider: str,
+    windows: tuple[QuotaWindow, ...],
+    *,
+    observed_at: float = 1_000,
+    freshness: str = "fresh",
+) -> QuotaSnapshot:
+    return QuotaSnapshot(
+        provider=provider,
+        source="test",
+        observed_at=observed_at,
+        captured_at=observed_at,
+        windows=windows,
+        freshness=freshness,
+    )
+
+
+def test_window_mapping_is_by_length_not_provider_specific_names() -> None:
+    now = 1_000.0
+    # Claude's names are five_hour/seven_day; Codex's are primary/secondary.
+    # The Codex fixture puts the weekly window in `primary` on purpose, so a
+    # name-based mapping would swap the two numbers and fail this test.
+    claude = _snapshot_with_windows(
+        "claude",
+        (
+            QuotaWindow("five_hour", 15, 85, 18_000, now + 2 * 3_600),
+            QuotaWindow("seven_day", 65, 35, 604_800, now + 100 * 3_600),
+        ),
+    )
+    codex = _snapshot_with_windows(
+        "codex",
+        (
+            QuotaWindow("primary", 94, 6, 604_800, now + 38 * 3_600),
+            QuotaWindow("secondary", 15, 85, 18_000, now + 2 * 3_600),
+        ),
+    )
+
+    assert assess_capacity(claude, now=now).quota == QuotaDetail(85, 2, 35, 100)
+    assert assess_capacity(codex, now=now).quota == QuotaDetail(85, 2, 6, 38)
+
+
+def test_missing_or_expired_windows_give_null_quota_never_a_guess() -> None:
+    now = 1_000.0
+    empty = QuotaDetail()
+
+    assert assess_capacity(None, now=now).quota == empty
+    assert assess_capacity(_snapshot_with_windows("codex", ()), now=now).quota == empty
+    # A window whose length is neither about 5 hours nor about 7 days is not
+    # mapped to either slot, even though it is a valid known window.
+    assert (
+        assess_capacity(
+            _snapshot_with_windows(
+                "codex",
+                (QuotaWindow("primary", 50, 50, 3_600, now + 1_800),),
+            ),
+            now=now,
+        ).quota
+        == empty
+    )
+    # An expired cache is discarded, not used, and reports no age.
+    expired = _snapshot_with_windows(
+        "codex",
+        (QuotaWindow("primary", 94, 6, 604_800, now + 38 * 3_600),),
+        observed_at=now - CACHE_MAX_AGE_SECONDS,
+        freshness="stale",
+    )
+    expired_assessment = assess_capacity(expired, now=now)
+    assert expired_assessment.state is CapacityState.UNKNOWN
+    assert expired_assessment.quota == empty
+    assert expired_assessment.age_hours is None
+    assert expired_assessment.reason is None
+
+
+def test_stale_but_unexpired_windows_are_used_and_reported_with_their_age() -> None:
+    now = 1_000.0
+    # A weekly window cannot recover in minutes, so a stale-but-unexpired Codex
+    # cache still yields its numbers and the critical rule. The collector skips
+    # refreshes under five minutes, so this is the common live case.
+    stale = _snapshot_with_windows(
+        "codex",
+        (QuotaWindow("primary", 94, 6, 604_800, now + 38 * 3_600),),
+        observed_at=now - 3_600,
+        freshness="stale",
+    )
+
+    assessment = assess_capacity(stale, now=now)
+
+    assert assessment.state is CapacityState.CRITICAL
+    assert assessment.quota == QuotaDetail(None, None, 6, 38)
+    assert assessment.age_hours == 1
+    assert assessment.reason == "codex weekly 6% left, resets in 38h"
+
+
+def test_fresh_windows_report_a_rounded_age() -> None:
+    now = 1_000.0
+    fresh = _snapshot_with_windows(
+        "codex",
+        (QuotaWindow("primary", 25, 75, 604_800, now + 100 * 3_600),),
+        observed_at=now - 90,
+    )
+
+    assert assess_capacity(fresh, now=now).age_hours == 0
+
+
+def test_critical_when_a_known_window_is_low_and_resets_far_out() -> None:
+
+    now = 1_000.0
+    codex = _snapshot_with_windows(
+        "codex",
+        (
+            QuotaWindow("primary", 94, 6, 604_800, now + 38 * 3_600),
+            QuotaWindow("secondary", 15, 85, 18_000, now + 2 * 3_600),
+        ),
+    )
+
+    assessment = assess_capacity(codex, now=now)
+
+    assert assessment.state is CapacityState.CRITICAL
+    assert assessment.reason == "codex weekly 6% left, resets in 38h"
+
+
+@pytest.mark.parametrize(
+    "remaining, resets_in_hours, expected",
+    [
+        (9.9, 12.1, CapacityState.CRITICAL),
+        (10.0, 38.0, CapacityState.CONSERVE),
+        (6.0, 12.0, CapacityState.CONSERVE),
+        (6.0, 11.9, CapacityState.CONSERVE),
+        (6.0, 48.0, CapacityState.CRITICAL),
+    ],
+)
+def test_critical_needs_both_low_remaining_and_a_far_reset(
+    remaining: float, resets_in_hours: float, expected: CapacityState
+) -> None:
+
+    now = 1_000.0
+    snapshot = _snapshot_with_windows(
+        "codex",
+        (
+            QuotaWindow(
+                "primary",
+                100 - remaining,
+                remaining,
+                604_800,
+                now + resets_in_hours * 3_600,
+            ),
+        ),
+    )
+
+    assert assess_capacity(snapshot, now=now).state is expected
+
+
+def test_exhausted_takes_precedence_over_critical() -> None:
+
+    now = 1_000.0
+    snapshot = _snapshot_with_windows(
+        "codex",
+        (QuotaWindow("primary", 100, 0, 604_800, now + 38 * 3_600),),
+    )
+
+    assessment = assess_capacity(snapshot, now=now)
+
+    assert assessment.state is CapacityState.EXHAUSTED
+    assert assessment.reason is None
+
+
+def test_quota_slot_prefers_the_window_closest_to_the_nominal_length() -> None:
+
+    now = 1_000.0
+    # Claude's spend_limit window stores `resets_at - captured_at` as its
+    # synthetic length, so it can look about 5 hours long. It must not shadow
+    # the real five_hour window in the 5-hour slot.
+    snapshot = _snapshot_with_windows(
+        "claude",
+        (
+            QuotaWindow("five_hour", 15, 85, 18_000, now + 2 * 3_600),
+            QuotaWindow("spend_limit", 97, 3, 17_280, now + 17_280),
+        ),
+    )
+
+    assessment = assess_capacity(snapshot, now=now)
+
+    assert assessment.quota == QuotaDetail(85, 2, None, None)

@@ -13,8 +13,11 @@ from herdr_jev_router.models import (
     RoutingDecision,
 )
 from herdr_jev_router.policy import (
+    CRITICAL_CAPACITY_PENALTY,
     RoutingPolicyError,
+    apply_critical_fallback,
     launch_profile,
+    route_eligible,
     validate_decision,
 )
 
@@ -280,3 +283,82 @@ def test_opt_in_harness_without_configuration_fails_closed() -> None:
         launch_profile(routing_decision(Harness.PI))
 
     assert error.value.code == "harness_not_configured"
+
+
+def critical_capacity(
+    harness: Harness = Harness.CODEX, penalty: int = 0
+) -> ProviderCapacity:
+    return ProviderCapacity(
+        harness,
+        CapacityState.CRITICAL,
+        penalty,
+        reason=f"{harness.value} weekly 6% left, resets in 38h",
+    )
+
+
+def test_route_eligible_removes_critical_when_an_alternative_remains() -> None:
+    capacities = (
+        critical_capacity(Harness.CODEX),
+        ProviderCapacity(Harness.CLAUDE, CapacityState.CONSERVE),
+    )
+
+    assert route_eligible(capacities) == (
+        ProviderCapacity(Harness.CLAUDE, CapacityState.CONSERVE),
+    )
+
+
+def test_only_provider_fallback_keeps_critical_eligible_with_a_penalty() -> None:
+    capacities = (critical_capacity(Harness.CODEX),)
+
+    effective = apply_critical_fallback(capacities)
+
+    assert effective == (critical_capacity(Harness.CODEX, CRITICAL_CAPACITY_PENALTY),)
+    assert route_eligible(effective) == effective
+
+
+def test_critical_fallback_does_not_resurrect_exhausted_providers() -> None:
+    capacities = (
+        critical_capacity(Harness.CODEX),
+        ProviderCapacity(Harness.CLAUDE, CapacityState.EXHAUSTED),
+    )
+
+    effective = apply_critical_fallback(capacities)
+
+    assert effective[1].state is CapacityState.EXHAUSTED
+    assert effective[0].penalty == CRITICAL_CAPACITY_PENALTY
+    assert route_eligible(effective) == (effective[0],)
+
+
+def test_route_eligible_returns_nothing_when_every_provider_is_exhausted() -> None:
+    assert (
+        route_eligible(
+            (
+                ProviderCapacity(Harness.CODEX, CapacityState.EXHAUSTED),
+                ProviderCapacity(Harness.CLAUDE, CapacityState.EXHAUSTED),
+            )
+        )
+        == ()
+    )
+
+
+def test_decision_validation_rejects_a_removed_critical_harness() -> None:
+    capacities = (
+        critical_capacity(Harness.CODEX),
+        ProviderCapacity(Harness.CLAUDE, CapacityState.CONSERVE),
+    )
+
+    with pytest.raises(RoutingPolicyError) as error:
+        validate_decision(valid_answers(harness=choice("codex")), capacities)
+
+    assert error.value.code == "ineligible_harness"
+    assert {capacity.harness for capacity in route_eligible(capacities)} == {
+        Harness.CLAUDE
+    }
+
+
+def test_decision_validation_accepts_the_only_critical_provider() -> None:
+    capacities = apply_critical_fallback((critical_capacity(Harness.CODEX),))
+
+    decision = validate_decision(valid_answers(harness=choice("codex")), capacities)
+
+    assert decision.harness is Harness.CODEX

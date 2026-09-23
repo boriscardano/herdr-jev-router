@@ -42,7 +42,7 @@ Codex app-server JSONL ─┐
 Claude statusLine JSON ─┘
 ```
 
-Each source owns its own cache and freshness. A failure in one source must not erase or relabel the other source. A missing or stale source is `unknown`, not `exhausted`. Only an explicit provider signal or a valid window at zero remaining capacity can produce `exhausted`.
+Each source owns its own cache and freshness. A failure in one source must not erase or relabel the other source. A missing or expired source is `unknown`, not `exhausted`. An unexpired cache is used for the quota numbers and the critical rule even when it is labeled stale, because a quota window cannot recover between refreshes. Only an explicit provider signal or a valid window at zero remaining capacity can produce `exhausted`.
 
 The collector must persist normalized quota only. It must never persist source response bodies, credentials, authorization headers, session identifiers, transcript paths, prompts, responses, repository paths, or account identifiers.
 
@@ -149,8 +149,10 @@ The current parser:
 
 The classifier uses valid future-reset windows. A valid zero remaining window or
 an explicit reached state makes Codex `exhausted`. Missing, malformed, or
-expired source data becomes `unknown`. The implementation does not treat the
-10,080-minute weekly window as the only possible Codex quota.
+expired source data becomes `unknown`. A known window under 10 percent
+remaining that resets more than 12 hours from now makes Codex `critical`, fresh
+or stale. The implementation does not treat the 10,080-minute weekly window as
+the only possible Codex quota.
 
 ## Claude Code source
 
@@ -237,7 +239,18 @@ The two sources produce the same minimal shape:
 
 `observed_at` is the source observation time when the source provides one. For status-line input, use the local capture time because the feed does not provide a quota-observation timestamp. `captured_at` is the local write time. Neither timestamp may be advanced when a refresh fails.
 
-The cache schema must reject unknown top-level fields and invalid percentages. A provider result with no valid window is `unknown`. The capacity layer, not the parser, owns the `surplus`, `on_pace`, `conserve`, `unknown`, and `exhausted` labels described in `docs/design.md`.
+The cache schema must reject unknown top-level fields and invalid percentages. A provider result with no valid window is `unknown`. The capacity layer, not the parser, owns the `surplus`, `on_pace`, `conserve`, `unknown`, `critical`, and `exhausted` labels described in `docs/design.md`.
+
+The capacity layer maps windows to the 5-hour and weekly slots by length, not by
+provider name: about 5 hours and about 7 days, each with a 10 percent
+tolerance. Claude's `five_hour`/`seven_day` and Codex's `primary`/`secondary`
+therefore map the same way. When two windows fall within tolerance of one slot,
+the window whose length is closest to the nominal value wins, and a tie prefers
+the lower remaining percent. A window of any other length is not sent to Jev.
+Claude's `spend_limit` window stores a synthetic length (`resets_at` minus the
+capture time), so a short spend limit can look about 5 hours long. The
+closest-length rule keeps the real `five_hour` window when both are present,
+but a spend limit can fill the 5-hour slot when no real 5-hour window is cached.
 
 ## Cache and freshness behavior
 

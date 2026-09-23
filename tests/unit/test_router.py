@@ -15,7 +15,13 @@ from herdr_jev_router.models import (
     OpenCodeModel,
     PiModel,
     ProviderCapacity,
+    QuotaDetail,
     RoutingDecision,
+)
+from herdr_jev_router.policy import (
+    CRITICAL_CAPACITY_PENALTY,
+    apply_critical_fallback,
+    route_eligible,
 )
 from herdr_jev_router.router import RouterError, recommend
 
@@ -208,10 +214,18 @@ def test_recommend_calls_jev_once_and_persists_audit_before_returning(
             },
         },
         "capacity": {
-            "claude": {"state": "on_pace", "penalty": 0},
-            "codex": {"state": "surplus", "penalty": 0},
-            "opencode": {"state": "on_pace", "penalty": 0},
-            "pi": {"state": "on_pace", "penalty": 0},
+            "claude": _audited_capacity(
+                ProviderCapacity(Harness.CLAUDE, CapacityState.ON_PACE)
+            ),
+            "codex": _audited_capacity(
+                ProviderCapacity(Harness.CODEX, CapacityState.SURPLUS)
+            ),
+            "opencode": _audited_capacity(
+                ProviderCapacity(Harness.OPENCODE, CapacityState.ON_PACE)
+            ),
+            "pi": _audited_capacity(
+                ProviderCapacity(Harness.PI, CapacityState.ON_PACE)
+            ),
         },
         "jev": {
             "model": "jev-test-1",
@@ -263,12 +277,7 @@ def test_recommend_matrix_accepts_and_audits_every_capacity_state(
         ),
     )
     eligible = tuple(
-        harness
-        for harness, state in (
-            (Harness.CLAUDE, claude_state),
-            (Harness.CODEX, codex_state),
-        )
-        if state is not CapacityState.EXHAUSTED
+        capacity.harness for capacity in route_eligible(capacities_snapshot)
     )
     if not eligible:
         called = False
@@ -298,16 +307,27 @@ def test_recommend_matrix_accepts_and_audits_every_capacity_state(
 
     result = run_recommend(tmp_path, fake_jev, capacities=capacities_snapshot)
 
+    effective = {
+        capacity.harness: capacity
+        for capacity in apply_critical_fallback(capacities_snapshot)
+    }
     assert result.recommended.harness is selected
     assert audit_record(tmp_path)["capacity"] == {
-        "claude": {
-            "state": claude_state.value,
-            "penalty": 1 if claude_state is CapacityState.UNKNOWN else 0,
-        },
-        "codex": {
-            "state": codex_state.value,
-            "penalty": 1 if codex_state is CapacityState.UNKNOWN else 0,
-        },
+        "claude": _audited_capacity(effective[Harness.CLAUDE]),
+        "codex": _audited_capacity(effective[Harness.CODEX]),
+    }
+
+
+def _audited_capacity(capacity: ProviderCapacity) -> dict[str, object]:
+    return {
+        "state": capacity.state.value,
+        "penalty": capacity.penalty,
+        "age_hours": capacity.age_hours,
+        "five_hour_remaining_percent": None,
+        "five_hour_resets_in_hours": None,
+        "weekly_remaining_percent": None,
+        "weekly_resets_in_hours": None,
+        "reason": None,
     }
 
 
@@ -461,3 +481,124 @@ def test_recommend_fails_without_calling_jev_when_all_capacity_is_exhausted(
     assert record["phase"] == "recommendation"
     assert record["request_id"] == "rec-request"
     assert record["error_category"] == "capacity"
+
+
+def test_audit_records_the_same_quota_numbers_sent_to_jev(tmp_path: Path) -> None:
+
+    capacities_snapshot = (
+        ProviderCapacity(
+            Harness.CLAUDE,
+            CapacityState.ON_PACE,
+            0,
+            QuotaDetail(85, 2, 35, 100),
+        ),
+        ProviderCapacity(Harness.CODEX, CapacityState.SURPLUS),
+        ProviderCapacity(Harness.OPENCODE, CapacityState.ON_PACE),
+        ProviderCapacity(Harness.PI, CapacityState.ON_PACE),
+    )
+
+    async def fake_jev(**kwargs: object) -> JevRoutingResult:
+        return jev_result()
+
+    run_recommend(tmp_path, fake_jev, capacities=capacities_snapshot)
+
+    capacity = audit_record(tmp_path)["capacity"]
+    assert capacity["claude"] == {
+        "state": "on_pace",
+        "penalty": 0,
+        "age_hours": None,
+        "five_hour_remaining_percent": 85,
+        "five_hour_resets_in_hours": 2,
+        "weekly_remaining_percent": 35,
+        "weekly_resets_in_hours": 100,
+        "reason": None,
+    }
+    assert capacity["codex"] == {
+        "state": "surplus",
+        "penalty": 0,
+        "age_hours": None,
+        "five_hour_remaining_percent": None,
+        "five_hour_resets_in_hours": None,
+        "weekly_remaining_percent": None,
+        "weekly_resets_in_hours": None,
+        "reason": None,
+    }
+
+
+def test_audit_explains_a_removed_critical_provider(tmp_path: Path) -> None:
+
+    capacities_snapshot = (
+        ProviderCapacity(Harness.CLAUDE, CapacityState.ON_PACE),
+        ProviderCapacity(
+            Harness.CODEX,
+            CapacityState.CRITICAL,
+            0,
+            QuotaDetail(None, None, 6, 38),
+            "codex weekly 6% left, resets in 38h",
+        ),
+    )
+
+    async def fake_jev(**kwargs: object) -> JevRoutingResult:
+        return matrix_jev_result(
+            harness=Harness.CLAUDE, eligible_harnesses=(Harness.CLAUDE,)
+        )
+
+    result = run_recommend(tmp_path, fake_jev, capacities=capacities_snapshot)
+
+    assert result.recommended.harness is Harness.CLAUDE
+    assert audit_record(tmp_path)["capacity"]["codex"] == {
+        "state": "critical",
+        "penalty": 0,
+        "age_hours": None,
+        "five_hour_remaining_percent": None,
+        "five_hour_resets_in_hours": None,
+        "weekly_remaining_percent": 6,
+        "weekly_resets_in_hours": 38,
+        "reason": "codex weekly 6% left, resets in 38h",
+    }
+
+
+def test_recommend_rejects_jev_selecting_a_removed_critical_provider(
+    tmp_path: Path,
+) -> None:
+    capacities_snapshot = (
+        ProviderCapacity(Harness.CLAUDE, CapacityState.ON_PACE),
+        ProviderCapacity(Harness.CODEX, CapacityState.CRITICAL),
+    )
+
+    async def fake_jev(**kwargs: object) -> JevRoutingResult:
+        return matrix_jev_result(
+            harness=Harness.CODEX,
+            eligible_harnesses=(Harness.CLAUDE, Harness.CODEX),
+        )
+
+    with pytest.raises(RouterError) as error:
+        run_recommend(tmp_path, fake_jev, capacities=capacities_snapshot)
+
+    assert error.value.code == "validation_failed"
+    assert audit_record(tmp_path)["error_category"] == "validation"
+
+
+def test_recommend_applies_the_critical_fallback_penalty(tmp_path: Path) -> None:
+    capacities_snapshot = (
+        ProviderCapacity(
+            Harness.CODEX,
+            CapacityState.CRITICAL,
+            0,
+            QuotaDetail(None, None, 6, 38),
+            "codex weekly 6% left, resets in 38h",
+        ),
+    )
+
+    async def fake_jev(**kwargs: object) -> JevRoutingResult:
+        return matrix_jev_result(
+            harness=Harness.CODEX, eligible_harnesses=(Harness.CODEX,)
+        )
+
+    result = run_recommend(tmp_path, fake_jev, capacities=capacities_snapshot)
+
+    assert result.capacities[0].penalty == CRITICAL_CAPACITY_PENALTY
+    assert (
+        audit_record(tmp_path)["capacity"]["codex"]["penalty"]
+        == CRITICAL_CAPACITY_PENALTY
+    )

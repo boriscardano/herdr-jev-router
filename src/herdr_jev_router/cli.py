@@ -30,13 +30,18 @@ from herdr_jev_router.models import (
     Effort,
     Harness,
     ProviderCapacity,
+    QuotaDetail,
 )
 from herdr_jev_router.policy import (
     UNKNOWN_CAPACITY_PENALTY,
     RoutingPolicyError,
     launch_profile,
 )
-from herdr_jev_router.quota import classify_capacity, read_cache
+from herdr_jev_router.quota import (
+    CapacityAssessment,
+    assess_capacity,
+    read_cache,
+)
 from herdr_jev_router.quota_claude import (
     CLAUDE_CACHE_NAME,
     CLAUDE_REFRESH_INTERVAL_SECONDS,
@@ -414,8 +419,10 @@ def _usage(
             now=now,
             refresh_interval=refresh_interval,
         )
+        assessment = assess_capacity(snapshot, now=now)
         result[harness.value] = {
-            "state": classify_capacity(snapshot, now=now).value,
+            "state": assessment.state.value,
+            "reason": assessment.reason,
             "freshness": snapshot.freshness if snapshot is not None else None,
             "source": snapshot.source if snapshot is not None else None,
             "detected": harness in availability.detected,
@@ -548,7 +555,9 @@ def _quota_line(name: str, entry: Mapping[str, Any]) -> str | None:
     if not entry["enabled"]:
         return None
     if entry["source"] is not None:
-        return f"quota {name}: {entry['state']}"
+        reason = entry.get("reason")
+        suffix = f" ({reason})" if reason else ""
+        return f"quota {name}: {entry['state']}{suffix}"
     setup = _QUOTA_SETUP.get(name)
     if setup is None:
         return f"quota {name}: no local quota source, capacity stays unknown"
@@ -891,11 +900,13 @@ def _write_spawn_summary(output: TextIO, result: _SpawnResult) -> None:
     )
 
 
-def _provider_states(state_dir: Path, *, now: float) -> dict[Harness, CapacityState]:
-    """Read every provider cache and classify its current capacity state."""
+def _provider_states(
+    state_dir: Path, *, now: float
+) -> dict[Harness, CapacityAssessment]:
+    """Read every provider cache and assess its current capacity and quota."""
 
     return {
-        harness: classify_capacity(
+        harness: assess_capacity(
             read_cache(
                 state_dir / f"{harness.value}-quota.json",
                 now=now,
@@ -908,22 +919,29 @@ def _provider_states(state_dir: Path, *, now: float) -> dict[Harness, CapacitySt
 
 
 def _capacity_snapshot(
-    states: Mapping[Harness, CapacityState], enabled: frozenset[Harness]
+    assessments: Mapping[Harness, CapacityAssessment],
+    enabled: frozenset[Harness],
 ) -> tuple[ProviderCapacity, ...]:
-    """Attach penalties and force every disabled harness to exhausted."""
+    """Attach quota numbers and penalties, forcing disabled harnesses to exhausted."""
 
-    return tuple(
+    capacities = tuple(
         ProviderCapacity(
             harness,
-            state if harness in enabled else CapacityState.EXHAUSTED,
+            assessment.state if harness in enabled else CapacityState.EXHAUSTED,
             (
                 UNKNOWN_CAPACITY_PENALTY
-                if harness in enabled and state is CapacityState.UNKNOWN
+                if harness in enabled and assessment.state is CapacityState.UNKNOWN
                 else 0
             ),
+            assessment.quota if harness in enabled else QuotaDetail(),
+            assessment.reason if harness in enabled else None,
+            assessment.age_hours if harness in enabled else None,
         )
-        for harness, state in states.items()
+        for harness, assessment in assessments.items()
     )
+    # The critical fallback penalty is applied in recommend(), the single
+    # routing path, so the audit and the Jev state always agree.
+    return capacities
 
 
 def _capacity_snapshot_for(
@@ -967,6 +985,8 @@ def _capacity_label(
 
     harness = capacity.harness
     if harness in availability.enabled:
+        if capacity.reason is not None:
+            return f"{capacity.state.value} ({capacity.reason})"
         return capacity.state.value
     if harness not in availability.detected:
         return "not installed"

@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-09-23
+
+### Added
+
+- Jev now receives the real remaining quota for every eligible provider: the
+  remaining percent and hours-to-reset for the 5-hour and weekly windows, mapped
+  by window length so Claude's `five_hour`/`seven_day` and Codex's
+  `primary`/`secondary` both work, plus `age_hours`, the rounded cache age.
+  Missing or expired windows are `null`, never a guess, and any unexpired cache
+  is used even when it is labeled stale, because a quota window cannot recover
+  between refreshes. The harness question tells Jev to prefer the provider with
+  more remaining quota when a task fits either.
+- A new `critical` capacity state: a known window with under 10 percent
+  remaining that resets more than 12 hours from now, fresh or stale. Critical
+  providers are removed before Jev like exhausted ones, unless every remaining
+  provider would be removed, in which case they stay eligible with a penalty so
+  the user always has a route. `usage`, `explain`, and `doctor --human` show
+  `critical` with the reason, and the audit record keeps the same quota numbers
+  and age.
+
 ## [0.1.2] - 2026-09-23
 
 ### Changed
@@ -86,7 +106,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Herdr CLI output is discarded or bounded, the pane split reply is size
   checked, and a closed stdout pipe is handled without a traceback.
 
-[Unreleased]: https://github.com/boriscardano/herdr-jev-router/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/boriscardano/herdr-jev-router/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/boriscardano/herdr-jev-router/releases/tag/v0.1.3
 [0.1.2]: https://github.com/boriscardano/herdr-jev-router/releases/tag/v0.1.2
 [0.1.1]: https://github.com/boriscardano/herdr-jev-router/releases/tag/v0.1.1
 [0.1.0]: https://github.com/boriscardano/herdr-jev-router/releases/tag/v0.1.0

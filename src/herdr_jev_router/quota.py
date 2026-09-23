@@ -13,10 +13,21 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from herdr_jev_router.models import CapacityState, Harness
+from herdr_jev_router.models import CapacityState, Harness, QuotaDetail
 
 CACHE_MAX_AGE_SECONDS = 6 * 60 * 60
 SCHEMA_VERSION = 1
+# A provider is critical only when a known window is nearly empty and will not
+# reset soon. Both bounds are deliberately strict: 10% or exactly 12 hours is
+# not critical.
+CRITICAL_REMAINING_PERCENT = 10.0
+CRITICAL_RESET_HOURS = 12.0
+_FIVE_HOUR_SECONDS = 5 * 60 * 60
+_WEEKLY_SECONDS = 7 * 24 * 60 * 60
+# Provider window lengths are nominal. Accept about 5 hours and about 7 days,
+# so Claude's five_hour/seven_day and Codex's primary/secondary both map by
+# length instead of by provider-specific names.
+_WINDOW_LENGTH_TOLERANCE = 0.1
 _FRESHNESS = frozenset({"fresh", "stale"})
 _SNAPSHOT_FIELDS = frozenset(
     {
@@ -305,20 +316,62 @@ def provider_lock(path: Path, *, blocking: bool = True) -> Iterator[bool]:
 def classify_capacity(snapshot: QuotaSnapshot | None, *, now: float) -> CapacityState:
     """Convert valid normalized windows into one deterministic capacity state."""
 
+    return assess_capacity(snapshot, now=now).state
+
+
+@dataclass(frozen=True, slots=True)
+class CapacityAssessment:
+    """Hold one provider's capacity state, quota numbers, age, and reason."""
+
+    state: CapacityState
+    quota: QuotaDetail
+    age_hours: float | None = None
+    reason: str | None = None
+
+
+def assess_capacity(
+    snapshot: QuotaSnapshot | None, *, now: float
+) -> CapacityAssessment:
+    """Classify one snapshot and derive its 5-hour and weekly quota numbers.
+
+    Any unexpired cache is used, fresh or stale: the collector refreshes Codex
+    every few minutes and skips a refresh under five minutes, so the cache is
+    often stale at routing time while a weekly window cannot recover that fast.
+    A missing or expired cache is `unknown` with no numbers and no age. Critical
+    is a hard, deterministic rule: a known window under 10% remaining that
+    resets more than 12 hours from now. Exhausted always wins.
+    """
+
+    empty = QuotaDetail()
     if snapshot is None:
-        return CapacityState.UNKNOWN
+        return CapacityAssessment(CapacityState.UNKNOWN, empty)
     age = now - snapshot.observed_at
     if age < 0 or age >= CACHE_MAX_AGE_SECONDS:
-        return CapacityState.UNKNOWN
+        return CapacityAssessment(CapacityState.UNKNOWN, empty)
     valid_windows = tuple(
         window for window in snapshot.windows if window.resets_at > now
     )
+    quota = _quota_detail(valid_windows, now=now)
+    age_hours = _round_sensibly(age / 3_600)
     if snapshot.reached or any(
         window.remaining_percent == 0 for window in valid_windows
     ):
-        return CapacityState.EXHAUSTED
+        return CapacityAssessment(CapacityState.EXHAUSTED, quota, age_hours)
     if not valid_windows:
-        return CapacityState.UNKNOWN
+        return CapacityAssessment(CapacityState.UNKNOWN, empty, age_hours)
+    critical_windows = tuple(
+        window
+        for window in valid_windows
+        if window.remaining_percent < CRITICAL_REMAINING_PERCENT
+        and window.resets_at - now > CRITICAL_RESET_HOURS * 3_600
+    )
+    if critical_windows:
+        return CapacityAssessment(
+            CapacityState.CRITICAL,
+            quota,
+            age_hours,
+            _critical_reason(snapshot.provider, critical_windows, now=now),
+        )
 
     expected = tuple(
         max(
@@ -331,10 +384,95 @@ def classify_capacity(snapshot: QuotaSnapshot | None, *, now: float) -> Capacity
         window.remaining_percent < pace
         for window, pace in zip(valid_windows, expected, strict=True)
     ):
-        return CapacityState.CONSERVE
+        return CapacityAssessment(CapacityState.CONSERVE, quota, age_hours)
     if all(
         window.remaining_percent >= pace + 20
         for window, pace in zip(valid_windows, expected, strict=True)
     ):
-        return CapacityState.SURPLUS
-    return CapacityState.ON_PACE
+        return CapacityAssessment(CapacityState.SURPLUS, quota, age_hours)
+    return CapacityAssessment(CapacityState.ON_PACE, quota, age_hours)
+
+
+def _quota_detail(windows: tuple[QuotaWindow, ...], *, now: float) -> QuotaDetail:
+    """Map windows to the 5-hour and weekly slots by length, never by name."""
+
+    five_hour = _select_window(windows, target=_FIVE_HOUR_SECONDS)
+    weekly = _select_window(windows, target=_WEEKLY_SECONDS)
+    return QuotaDetail(
+        five_hour_remaining_percent=(
+            None if five_hour is None else _round_sensibly(five_hour.remaining_percent)
+        ),
+        five_hour_resets_in_hours=(
+            None
+            if five_hour is None
+            else _round_sensibly((five_hour.resets_at - now) / 3_600)
+        ),
+        weekly_remaining_percent=(
+            None if weekly is None else _round_sensibly(weekly.remaining_percent)
+        ),
+        weekly_resets_in_hours=(
+            None
+            if weekly is None
+            else _round_sensibly((weekly.resets_at - now) / 3_600)
+        ),
+    )
+
+
+def _select_window(
+    windows: tuple[QuotaWindow, ...], *, target: float
+) -> QuotaWindow | None:
+    """Return the window closest to the nominal length, then the most conservative.
+
+    The closest-length tie-break matters for Claude's `spend_limit` window,
+    whose synthetic length can land near 5 hours; the real nominal window wins.
+    """
+
+    matches = tuple(
+        window
+        for window in windows
+        if abs(window.window_seconds - target) <= _WINDOW_LENGTH_TOLERANCE * target
+    )
+    if not matches:
+        return None
+    return min(
+        matches,
+        key=lambda window: (
+            abs(window.window_seconds - target),
+            window.remaining_percent,
+            -window.resets_at,
+        ),
+    )
+
+
+def _round_sensibly(value: float) -> float:
+    """Round one quota number to a tenth and keep integers as integers."""
+
+    rounded = round(value, 1)
+    return int(rounded) if float(rounded).is_integer() else rounded
+
+
+def _window_label(window: QuotaWindow) -> str:
+    """Name one window by its nominal length for a human-readable reason."""
+
+    if (
+        abs(window.window_seconds - _FIVE_HOUR_SECONDS)
+        <= _WINDOW_LENGTH_TOLERANCE * _FIVE_HOUR_SECONDS
+    ):
+        return "5-hour"
+    if (
+        abs(window.window_seconds - _WEEKLY_SECONDS)
+        <= _WINDOW_LENGTH_TOLERANCE * _WEEKLY_SECONDS
+    ):
+        return "weekly"
+    return window.name
+
+
+def _critical_reason(
+    provider: str, windows: tuple[QuotaWindow, ...], *, now: float
+) -> str:
+    """Explain the worst critical window as a short, stable sentence."""
+
+    window = min(windows, key=lambda item: (item.remaining_percent, -item.resets_at))
+    remaining = _round_sensibly(window.remaining_percent)
+    hours = _round_sensibly((window.resets_at - now) / 3_600)
+    return f"{provider} {_window_label(window)} {remaining}% left, resets in {hours}h"

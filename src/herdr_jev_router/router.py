@@ -10,12 +10,13 @@ from typing import TypeGuard
 from herdr_jev_router.audit import AuditError, append_audit_record
 from herdr_jev_router.jev import JevRoutingResult, route_with_jev
 from herdr_jev_router.models import (
-    CapacityState,
     ProviderCapacity,
     RoutingDecision,
 )
 from herdr_jev_router.policy import (
     RoutingPolicyError,
+    apply_critical_fallback,
+    route_eligible,
     validate_decision,
 )
 
@@ -70,7 +71,9 @@ async def recommend(
     """Call Jev once and durably return the validated recommendation."""
 
     constraints_snapshot = dict(constraints)
-    capacities_snapshot = tuple(capacities)
+    # The critical fallback is hard policy, applied in the single routing path
+    # so every caller and the audit see the same effective penalties.
+    capacities_snapshot = apply_critical_fallback(tuple(capacities))
     record = _v2_record(
         phase="recommendation",
         request_id=request_id,
@@ -79,10 +82,7 @@ async def recommend(
         constraints=constraints_snapshot,
         capacities=capacities_snapshot,
     )
-    if not any(
-        capacity.state is not CapacityState.EXHAUSTED
-        for capacity in capacities_snapshot
-    ):
+    if not route_eligible(capacities_snapshot):
         record["error_category"] = "capacity"
         _persist(audit_path, record)
         raise RouterError("no_eligible_provider", "no eligible provider")
@@ -167,6 +167,9 @@ def _v2_record(
                 capacity.harness.value: {
                     "state": capacity.state.value,
                     "penalty": capacity.penalty,
+                    "age_hours": capacity.age_hours,
+                    **capacity.quota.to_dict(),
+                    "reason": capacity.reason,
                 }
                 for capacity in capacities
             },
@@ -191,9 +194,7 @@ def _jev_audit(
     expected_labels = {
         **_EXPECTED_LABELS,
         "harness": frozenset(
-            capacity.harness.value
-            for capacity in capacities
-            if capacity.state is not CapacityState.EXHAUSTED
+            capacity.harness.value for capacity in route_eligible(capacities)
         ),
     }
     for answer_id in _ANSWER_NAMES:
