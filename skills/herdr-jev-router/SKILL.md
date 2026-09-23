@@ -79,6 +79,6 @@ A failure prints one JSON denial on stdout with `version`, `request_id` and
 | `launch_failed` | 1 | Inspect the pane and close any partial child, then retry. No task sent. |
 | `task_delivery_failed` | 1 | The child started but the task did not. Read the pane and prompt it. |
 | `routing_failed` | 1 | An unexpected internal error. Nothing started. Report it with the `request_id`. |
-| `invalid_request` | 2 | Fix the arguments. A task with a C0 or C1 control character other than a newline or tab is rejected here. Nothing started. |
+| `invalid_request` | 2 | Fix the arguments. A task with a C0 or C1 control character other than a newline or tab, a lone surrogate, or no visible character after removing whitespace and Unicode format characters is rejected here. Nothing started. |
 | `invalid_harness_configuration` | 2 | Fix the opt-in variable value, then retry. Nothing started. |
 | `configuration_failed` | 2 | Provide a key (environment or owner-only key file), or install `herdr` for `spawn`. |
