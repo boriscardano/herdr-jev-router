@@ -460,6 +460,20 @@ def test_jev_failure_is_audited_without_raw_exception_data(tmp_path: Path) -> No
     assert "secret provider body" not in serialized
 
 
+def test_non_jev_failure_is_audited_without_a_jev_error_code(tmp_path: Path) -> None:
+    async def failing_jev(**kwargs: object) -> JevRoutingResult:
+        raise RuntimeError("unexpected private detail")
+
+    with pytest.raises(RouterError) as error:
+        run_recommend(tmp_path, failing_jev)
+
+    assert error.value.code == "jev_failed"
+    record = audit_record(tmp_path)
+    assert record["error_category"] == "jev"
+    assert record["jev_error_code"] is None
+    assert "unexpected private detail" not in json.dumps(record)
+
+
 def test_recommend_accepts_two_decimal_rounded_jev_probabilities(
     tmp_path: Path,
 ) -> None:
