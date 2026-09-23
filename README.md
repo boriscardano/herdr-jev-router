@@ -30,10 +30,12 @@ Its build command runs `uv tool install --force .` in the plugin checkout, so
 the three console scripts land in `uv tool dir --bin`, usually
 `~/.local/bin`. Keep that directory on your `PATH`.
 
-Install the CLI directly from PyPI, or from a checkout:
+Install the CLI directly from the repository, optionally at a release tag, or
+from a local checkout:
 
 ```console
-uv tool install herdr-jev-router
+uv tool install git+https://github.com/boriscardano/herdr-jev-router
+uv tool install git+https://github.com/boriscardano/herdr-jev-router@v0.1.0
 uv tool install /path/to/this/checkout
 ```
 
