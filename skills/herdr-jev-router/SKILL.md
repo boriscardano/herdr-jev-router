@@ -1,6 +1,6 @@
 ---
 name: herdr-jev-router
-description: Route every task you delegate or parallelize to child agents while running in Herdr through the Jev router, not built-in subagents and not herdr agent start. Use when a parent agent in a Herdr pane must spawn a child agent for delegated work.
+description: Route every task you delegate or parallelize to child agents while running in Herdr through the Jev router, which replaces built-in subagents and herdr agent start for that purpose. Use when a parent agent in a Herdr pane must spawn a child agent for delegated work.
 ---
 
 # Route a child agent with Jev
