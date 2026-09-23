@@ -131,3 +131,31 @@ def test_the_opt_in_variables_in_the_skill_match_the_cli() -> None:
 
     for variable in OPT_IN_VARIABLES.values():
         assert variable in text
+
+
+def _skill_description() -> str:
+    """Return the frontmatter description value."""
+
+    frontmatter = _skill_text().split("---\n", 2)[1]
+    for line in frontmatter.splitlines():
+        if line.startswith("description:"):
+            return line.split(":", 1)[1].strip()
+    raise AssertionError("the skill frontmatter has no description")
+
+
+def test_the_description_names_delegation_and_replaces_builtins() -> None:
+    description = _skill_description().lower()
+
+    assert "delegat" in description or "parallel" in description
+    assert "built-in subagents" in description
+    assert "herdr agent start" in description
+
+
+def test_the_description_is_at_most_two_sentences() -> None:
+    sentences = [
+        sentence
+        for sentence in re.split(r"(?<=[.!?])\s+", _skill_description().strip())
+        if sentence
+    ]
+
+    assert 1 <= len(sentences) <= 2

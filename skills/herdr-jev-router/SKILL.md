@@ -1,6 +1,6 @@
 ---
 name: herdr-jev-router
-description: Delegate a task to a new child agent in Herdr through the Jev router instead of choosing a harness, model or effort yourself. Use when a parent agent inside a Herdr pane must spawn a child agent for a delegated task.
+description: Route every task you delegate or parallelize to child agents while running in Herdr through the Jev router, not built-in subagents and not herdr agent start. Use when a parent agent in a Herdr pane must spawn a child agent for delegated work.
 ---
 
 # Route a child agent with Jev
