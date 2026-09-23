@@ -571,6 +571,60 @@ def test_each_probability_map_is_validated(answer_id: str, label: str) -> None:
     assert error.value.code == "invalid_response"
 
 
+@pytest.mark.parametrize(
+    "probabilities, choice",
+    [
+        # Jev rounds each probability to two decimals, so a valid integer-ish
+        # split can sum to 0.99 or 1.01 instead of exactly 1.0.
+        ({"luna": 0.33, "terra": 0.33, "sol": 0.33}, "terra"),
+        ({"luna": 0.34, "terra": 0.33, "sol": 0.34}, "luna"),
+    ],
+)
+def test_two_decimal_rounded_probability_sums_are_accepted(
+    probabilities: dict[str, float], choice: str
+) -> None:
+    body = valid_response()
+    answers = body["answers"]
+    assert isinstance(answers, dict)
+    codex_model = answers["codex_model"]
+    assert isinstance(codex_model, dict)
+    codex_model["choice"] = choice
+    codex_model["probabilities"] = probabilities
+
+    result = call_with_transport(MockTransport(lambda request: response(body)))
+
+    assert result.probabilities["codex_model"] == probabilities
+
+
+@pytest.mark.parametrize(
+    "probabilities, choice",
+    [
+        # 0.8 is far below one; nothing that rounds to two decimals can explain it.
+        ({"luna": 0.5, "terra": 0.2, "sol": 0.1}, "luna"),
+        # 1.2 is far above one for the same reason.
+        ({"luna": 0.5, "terra": 0.4, "sol": 0.3}, "luna"),
+        # Five options tolerate at most 5 * 0.005; 0.97 is outside that bound.
+        ({"low": 0.2, "medium": 0.2, "high": 0.2, "xhigh": 0.2, "max": 0.17}, "low"),
+    ],
+)
+def test_probability_sums_far_from_one_are_rejected(
+    probabilities: dict[str, float], choice: str
+) -> None:
+    body = valid_response()
+    answers = body["answers"]
+    assert isinstance(answers, dict)
+    answer_id = "effort" if "low" in probabilities else "codex_model"
+    answer = answers[answer_id]
+    assert isinstance(answer, dict)
+    answer["choice"] = choice
+    answer["probabilities"] = probabilities
+
+    with pytest.raises(JevError) as error:
+        call_with_transport(MockTransport(lambda request: response(body)))
+
+    assert error.value.code == "invalid_response"
+
+
 def test_malformed_success_body_maps_to_invalid_response() -> None:
     with pytest.raises(JevError) as error:
         call_with_transport(

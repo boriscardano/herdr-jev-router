@@ -8,7 +8,12 @@ from time import time
 from typing import TypeGuard
 
 from herdr_jev_router.audit import AuditError, append_audit_record
-from herdr_jev_router.jev import JevRoutingResult, route_with_jev
+from herdr_jev_router.jev import (
+    JevError,
+    JevRoutingResult,
+    probability_sum_tolerance,
+    route_with_jev,
+)
 from herdr_jev_router.models import (
     ProviderCapacity,
     RoutingDecision,
@@ -93,8 +98,11 @@ async def recommend(
             constraints=constraints_snapshot,
             capacities=capacities_snapshot,
         )
-    except Exception:
+    except Exception as error:
         record["error_category"] = "jev"
+        # Audit only Jev's stable code, never its message or response body, so
+        # a recurring failure is diagnosable from the record alone.
+        record["jev_error_code"] = error.code if isinstance(error, JevError) else None
         _persist(audit_path, record)
         raise RouterError("jev_failed", "Jev routing failed") from None
 
@@ -211,7 +219,11 @@ def _jev_audit(
                 not _probability(label, probability)
                 for label, probability in probabilities.items()
             )
-            or not isclose(fsum(probabilities.values()), 1.0, abs_tol=1e-6)
+            or not isclose(
+                fsum(probabilities.values()),
+                1.0,
+                abs_tol=probability_sum_tolerance(len(expected_labels[answer_id])),
+            )
             or answer["value"] not in probabilities
             or probabilities[answer["value"]] != max(probabilities.values())
             or not _finite_number(confidence)
