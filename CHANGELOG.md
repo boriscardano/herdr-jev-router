@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-09-23
+
+### Changed
+
+- The skill description now tells a master agent to use the router for all
+  delegation on its own ([#5](https://github.com/boriscardano/herdr-jev-router/pull/5)).
+- Tests no longer read the developer's key file ([#6](https://github.com/boriscardano/herdr-jev-router/pull/6)).
+
+### Fixed
+
+- Lone surrogates and invisible-only task text are rejected with
+  `invalid_request` ([#7](https://github.com/boriscardano/herdr-jev-router/pull/7)).
+
 ## [0.1.1] - 2026-09-23
 
 ### Added
@@ -73,6 +86,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Herdr CLI output is discarded or bounded, the pane split reply is size
   checked, and a closed stdout pipe is handled without a traceback.
 
-[Unreleased]: https://github.com/boriscardano/herdr-jev-router/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/boriscardano/herdr-jev-router/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/boriscardano/herdr-jev-router/releases/tag/v0.1.2
 [0.1.1]: https://github.com/boriscardano/herdr-jev-router/releases/tag/v0.1.1
 [0.1.0]: https://github.com/boriscardano/herdr-jev-router/releases/tag/v0.1.0
