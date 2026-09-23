@@ -20,7 +20,7 @@ Jev on stock, unpatched Herdr. It is advisory and cannot enforce routing.
 - Keep the implementation minimal and limited to advisory spawning on stock Herdr.
 - Prefer a small amount of obvious repetition over a premature abstraction. Extract shared code only after repeated behavior and tests show a stable boundary.
 - Never store or log API keys, OAuth tokens, authorization headers, or raw credential responses.
-- Keep provider arithmetic and hard policy in code. Use Jev only for typed semantic judgments.
+- Jev decides routing. Code only computes and reports facts (capacity states and quota numbers, the harness inventory) and filters provider options that cannot run here, such as an uninstalled harness or an opt-in harness without its configuration. Never encode a quota-based routing limit or nudge in code.
 - Fail closed when Jev or audit logging is unavailable.
 - Do not claim enforcement: stock Herdr has no routing hook, so a direct `herdr agent start` or harness binary bypasses the router.
 - Verify the child pane is running the selected harness, model, and effort. A successful command return is not end-to-end proof.

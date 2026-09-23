@@ -21,7 +21,7 @@ CODEX_CACHE_NAME = "codex-quota.json"
 CODEX_REFRESH_INTERVAL_SECONDS = 5 * 60
 # Reported to the local Codex app-server during the JSON-RPC initialize
 # handshake. Keep it in sync with the release version (test_release_version.py).
-CLIENT_VERSION = "0.1.3"
+CLIENT_VERSION = "0.1.4"
 _COMMAND = ("codex", "app-server", "--listen", "stdio://")
 
 

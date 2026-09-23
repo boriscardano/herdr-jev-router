@@ -18,12 +18,8 @@ from herdr_jev_router.models import (
     ProviderCapacity,
     RoutingDecision,
 )
-from herdr_jev_router.policy import (
-    RoutingPolicyError,
-    apply_critical_fallback,
-    route_eligible,
-    validate_decision,
-)
+from herdr_jev_router.policy import RoutingPolicyError, validate_decision
+from herdr_jev_router.preferences import Preferences, default_preferences
 
 _ANSWER_NAMES = (
     "harness",
@@ -70,15 +66,19 @@ async def recommend(
     constraints: Mapping[str, object],
     capacities: Sequence[ProviderCapacity],
     audit_path: Path,
+    preferences: Preferences | None = None,
     jev_callable: JevCallable = route_with_jev,
     clock: Clock = time,
 ) -> RecommendationResult:
     """Call Jev once and durably return the validated recommendation."""
 
     constraints_snapshot = dict(constraints)
-    # The critical fallback is hard policy, applied in the single routing path
-    # so every caller and the audit see the same effective penalties.
-    capacities_snapshot = apply_critical_fallback(tuple(capacities))
+    effective_preferences = (
+        default_preferences() if preferences is None else preferences
+    )
+    # The caller already removed harnesses that cannot be launched. Jev decides
+    # among everything else, whatever the quota says.
+    capacities_snapshot = tuple(capacities)
     record = _v2_record(
         phase="recommendation",
         request_id=request_id,
@@ -86,17 +86,19 @@ async def recommend(
         role=role,
         constraints=constraints_snapshot,
         capacities=capacities_snapshot,
+        preferences=effective_preferences,
     )
-    if not route_eligible(capacities_snapshot):
+    if not capacities_snapshot:
         record["error_category"] = "capacity"
         _persist(audit_path, record)
-        raise RouterError("no_eligible_provider", "no eligible provider")
+        raise RouterError("no_eligible_provider", "no launchable provider")
     try:
         jev_result = await jev_callable(
             task=task,
             role=role,
             constraints=constraints_snapshot,
             capacities=capacities_snapshot,
+            preferences=effective_preferences.text,
         )
     except Exception as error:
         record["error_category"] = "jev"
@@ -159,6 +161,7 @@ def _v2_record(
     role: str,
     constraints: Mapping[str, object],
     capacities: Sequence[ProviderCapacity],
+    preferences: Preferences,
 ) -> dict[str, object]:
     record = _base_record(
         timestamp=timestamp,
@@ -171,10 +174,14 @@ def _v2_record(
             "schema_version": 2,
             "phase": phase,
             "request_id": request_id,
+            # Only the source and the length are audited, never the text.
+            "preferences": {
+                "source": preferences.source,
+                "length": preferences.length,
+            },
             "capacity": {
                 capacity.harness.value: {
                     "state": capacity.state.value,
-                    "penalty": capacity.penalty,
                     "age_hours": capacity.age_hours,
                     **capacity.quota.to_dict(),
                     "reason": capacity.reason,
@@ -201,9 +208,7 @@ def _jev_audit(
     answers: dict[str, object] = {}
     expected_labels = {
         **_EXPECTED_LABELS,
-        "harness": frozenset(
-            capacity.harness.value for capacity in route_eligible(capacities)
-        ),
+        "harness": frozenset(capacity.harness.value for capacity in capacities),
     }
     for answer_id in _ANSWER_NAMES:
         answer = result.answers[answer_id]

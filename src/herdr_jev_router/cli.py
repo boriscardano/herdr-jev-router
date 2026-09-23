@@ -25,17 +25,12 @@ from herdr_jev_router.harness import (
     harness_availability,
 )
 from herdr_jev_router.jev import JevRequest, build_jev_request, route_with_jev
-from herdr_jev_router.models import (
-    CapacityState,
-    Effort,
-    Harness,
-    ProviderCapacity,
-    QuotaDetail,
-)
-from herdr_jev_router.policy import (
-    UNKNOWN_CAPACITY_PENALTY,
-    RoutingPolicyError,
-    launch_profile,
+from herdr_jev_router.models import Effort, Harness, ProviderCapacity
+from herdr_jev_router.policy import RoutingPolicyError, launch_profile
+from herdr_jev_router.preferences import (
+    Preferences,
+    PreferencesError,
+    resolve_preferences,
 )
 from herdr_jev_router.quota import (
     CapacityAssessment,
@@ -400,7 +395,6 @@ def main(
                 request_id=request_id,
                 availability=availability,
             ),
-            availability,
         )
         return 0
     except _ConfigurationError:
@@ -408,6 +402,9 @@ def main(
         return 2
     except HarnessConfigurationError as error:
         _write_denial(output, request_id, error.code)
+        return 2
+    except PreferencesError:
+        _write_denial(output, request_id, PreferencesError.code)
         return 2
     except (_RequestError, _UsageError):
         _write_denial(output, request_id, "invalid_request")
@@ -474,17 +471,25 @@ def _doctor(
     }
     configuration_ok = availability.configuration_error is None
     commands_ok = commands["herdr"] and bool(availability.enabled)
+    preferences = resolve_preferences(environment)
     ok = (
         credential_ok
         and state_ok
         and router_files_ok
         and commands_ok
         and configuration_ok
+        and preferences.problem is None
     )
     return {
         "ok": ok,
         "checks": {
             "credential": credential,
+            "preferences": {
+                "ok": preferences.problem is None,
+                "source": preferences.preferences.source,
+                "length": preferences.preferences.length,
+                "problem": preferences.problem,
+            },
             "state_directory": {"ok": state_ok},
             "router_files": {"ok": router_files_ok, **router_files},
             "providers": _usage(state_dir, now=now, availability=availability),
@@ -518,6 +523,13 @@ def _write_doctor_human(output: TextIO, result: Mapping[str, object]) -> None:
             "TypeSafe key: missing, set TYPESAFE_API_KEY or write the key file "
             "at $XDG_CONFIG_HOME/herdr-jev-router/key"
         )
+    preference_check = checks["preferences"]
+    if preference_check["problem"] is not None:
+        lines.append(f"preferences: {preference_check['problem']}")
+    elif preference_check["source"] == "file":
+        lines.append("preferences: file")
+    else:
+        lines.append("preferences: built-in default")
     if checks["commands"]["herdr"]:
         lines.append("herdr: ok")
     else:
@@ -662,6 +674,15 @@ def _constraints(arguments: argparse.Namespace) -> dict[str, bool]:
     }
 
 
+def _preferences_or_fail(environment: Mapping[str, str]) -> Preferences:
+    """Return the preferences in use, or fail closed on an unsafe file."""
+
+    resolution = resolve_preferences(environment)
+    if resolution.problem is not None:
+        raise PreferencesError(resolution.problem)
+    return resolution.preferences
+
+
 def _recommend_decision(
     *,
     request_id: str,
@@ -671,6 +692,7 @@ def _recommend_decision(
     state_dir: Path,
     audit_path: Path | None,
     environment: Mapping[str, str],
+    preferences: Preferences,
     jev_callable: JevCallable,
     clock: Clock,
     availability: HarnessAvailability,
@@ -693,6 +715,7 @@ def _recommend_decision(
             constraints=constraints,
             capacities=capacities,
             audit_path=audit_path or state_dir / "routing.jsonl",
+            preferences=preferences,
             jev_callable=configured_jev,
             clock=clock,
         )
@@ -727,6 +750,7 @@ def _spawn_command(
         state_dir=arguments.state_dir,
         audit_path=arguments.audit_path,
         environment=environment,
+        preferences=_preferences_or_fail(environment),
         jev_callable=jev_callable,
         clock=clock,
         availability=availability,
@@ -785,6 +809,7 @@ def _explain_command(
     task = _task_text(arguments.task)
     role = _role(arguments.role)
     constraints = _constraints(arguments)
+    preferences = _preferences_or_fail(environment)
     recommendation = _recommend_decision(
         request_id=request_id,
         task=task,
@@ -793,18 +818,20 @@ def _explain_command(
         state_dir=arguments.state_dir,
         audit_path=arguments.audit_path,
         environment=environment,
+        preferences=preferences,
         jev_callable=jev_callable,
         clock=clock,
         availability=availability,
     )
-    # Rebuild from the same snapshot `recommend` sent to Jev, so the printed
-    # request and the wire request are built by the same function.
+    # Rebuild from the same snapshot and preferences `recommend` sent to Jev,
+    # so the printed request and the wire request go through one function.
     request = (
         build_jev_request(
             task=task,
             role=role,
             constraints=constraints,
             capacities=recommendation.capacities,
+            preferences=preferences.text,
         )
         if arguments.show_request
         else None
@@ -952,26 +979,24 @@ def _capacity_snapshot(
     assessments: Mapping[Harness, CapacityAssessment],
     enabled: frozenset[Harness],
 ) -> tuple[ProviderCapacity, ...]:
-    """Attach quota numbers and penalties, forcing disabled harnesses to exhausted."""
+    """Keep every harness that can be launched here, with its quota as information.
 
-    capacities = tuple(
+    A harness that is not installed, or OpenCode/Pi without opt-in configuration,
+    cannot be started, so it is not a choice for Jev. Every launchable harness is
+    kept whatever its quota; Jev decides whether to use it.
+    """
+
+    return tuple(
         ProviderCapacity(
             harness,
-            assessment.state if harness in enabled else CapacityState.EXHAUSTED,
-            (
-                UNKNOWN_CAPACITY_PENALTY
-                if harness in enabled and assessment.state is CapacityState.UNKNOWN
-                else 0
-            ),
-            assessment.quota if harness in enabled else QuotaDetail(),
-            assessment.reason if harness in enabled else None,
-            assessment.age_hours if harness in enabled else None,
+            assessment.state,
+            assessment.quota,
+            assessment.reason,
+            assessment.age_hours,
         )
         for harness, assessment in assessments.items()
+        if harness in enabled
     )
-    # The critical fallback penalty is applied in recommend(), the single
-    # routing path, so the audit and the Jev state always agree.
-    return capacities
 
 
 def _capacity_snapshot_for(
@@ -988,11 +1013,7 @@ def _bounded_string(value: object, *, maximum: int) -> str:
     return value
 
 
-def _write_explain(
-    output: TextIO,
-    result: _ExplainResult,
-    availability: HarnessAvailability,
-) -> None:
+def _write_explain(output: TextIO, result: _ExplainResult) -> None:
     """Print one human-readable recommendation without starting anything."""
 
     if result.request is not None:
@@ -1005,7 +1026,7 @@ def _write_explain(
         f"effort: {decision.effort.value}",
     ]
     lines.extend(
-        f"capacity {capacity.harness.value}: {_capacity_label(capacity, availability)}"
+        f"capacity {capacity.harness.value}: {_capacity_label(capacity)}"
         for capacity in recommendation.capacities
     )
     _write_output(output, "\n".join(lines) + "\n")
@@ -1036,22 +1057,12 @@ def _jev_request_document(request: JevRequest) -> dict[str, object]:
     }
 
 
-def _capacity_label(
-    capacity: ProviderCapacity, availability: HarnessAvailability
-) -> str:
-    """Explain one capacity line, distinguishing an unavailable harness."""
+def _capacity_label(capacity: ProviderCapacity) -> str:
+    """Explain one capacity line, including a critical provider's reason."""
 
-    harness = capacity.harness
-    if harness in availability.enabled:
-        if capacity.reason is not None:
-            return f"{capacity.state.value} ({capacity.reason})"
-        return capacity.state.value
-    if harness not in availability.detected:
-        return "not installed"
-    variable = OPT_IN_VARIABLES.get(harness)
-    if variable is None:
-        return "not enabled"
-    return f"not enabled (set {variable})"
+    if capacity.reason is not None:
+        return f"{capacity.state.value} ({capacity.reason})"
+    return capacity.state.value
 
 
 def _write_denial(output: TextIO, request_id: str | None, code: str) -> None:

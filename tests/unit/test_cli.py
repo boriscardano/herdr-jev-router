@@ -12,7 +12,7 @@ import herdr_jev_router.cli as cli_module
 import herdr_jev_router.router as router_module
 from herdr_jev_router.cli import main
 from herdr_jev_router.jev import JevError, JevRoutingResult, route_with_jev
-from herdr_jev_router.policy import route_eligible
+from herdr_jev_router.preferences import DEFAULT_PREFERENCES, MAX_PREFERENCES_BYTES
 from herdr_jev_router.quota import QuotaSnapshot, QuotaWindow, write_cache
 
 _OPT_IN_ENVIRONMENT = {
@@ -176,13 +176,7 @@ def test_explain_prints_human_readable_review_and_audits_without_starting(
     async def fake_jev(**kwargs: object) -> JevRoutingResult:
         nonlocal calls
         calls += 1
-        result = jev_result()
-        result.probabilities["harness"] = {
-            "codex": 0.6,
-            "opencode": 0.3,
-            "pi": 0.1,
-        }
-        return result
+        return jev_result()
 
     def refuse_to_start(*args: object, **kwargs: object) -> None:
         raise AssertionError("explain must not run the Herdr CLI")
@@ -270,16 +264,15 @@ def test_explain_show_request_prints_the_state_and_questions_sent_to_jev(
     assert state["task"] == recorded["task"] == "Review the authentication change."
     assert state["role"] == recorded["role"] == "worker"
     assert state["constraints"] == dict(recorded["constraints"])
-    eligible = route_eligible(tuple(recorded["capacities"]))
-    assert set(state["capacity"]) == {capacity.harness.value for capacity in eligible}
+    sent = tuple(recorded["capacities"])
+    assert set(state["capacity"]) == {capacity.harness.value for capacity in sent}
     assert state["capacity"] == {
         capacity.harness.value: {
             "state": capacity.state.value,
-            "penalty": capacity.penalty,
             "age_hours": capacity.age_hours,
             **capacity.quota.to_dict(),
         }
-        for capacity in eligible
+        for capacity in sent
     }
 
     questions = document["questions"]
@@ -296,7 +289,7 @@ def test_explain_show_request_prints_the_state_and_questions_sent_to_jev(
         assert question["type"] == "choice"
         assert question["instructions"]
         assert all(isinstance(option, str) for option in question["criteria"])
-    # The harness criteria are the eligible harnesses named in the state.
+    # The harness criteria are exactly the launchable harnesses in the state.
     assert set(questions["harness"]["criteria"]) == set(state["capacity"])
     assert set(questions["codex_model"]["criteria"]) == {"luna", "terra", "sol"}
 
@@ -553,18 +546,7 @@ def test_explain_fails_closed_when_the_audit_write_fails(
     assert "recommended harness:" not in output
 
 
-def test_explain_audits_all_exhausted_denial_without_calling_jev(
-    tmp_path: Path,
-) -> None:
-    state = tmp_path / "state"
-    for provider in ("claude", "codex", "opencode", "pi"):
-        cache(
-            state / f"{provider}-quota.json",
-            provider=provider,
-            source="test",
-            remaining=0,
-            now=1_000,
-        )
+def test_explain_denies_when_no_harness_is_launchable(tmp_path: Path) -> None:
     called = False
 
     async def fake_jev(**kwargs: object) -> JevRoutingResult:
@@ -572,7 +554,7 @@ def test_explain_audits_all_exhausted_denial_without_calling_jev(
         called = True
         return jev_result()
 
-    code, output = invoke_explain(tmp_path, fake_jev)
+    code, output = invoke_explain(tmp_path, fake_jev, command_finder=lambda name: None)
 
     assert code != 0
     assert json.loads(output)["denial"]["code"] == "no_eligible_provider"
@@ -581,6 +563,122 @@ def test_explain_audits_all_exhausted_denial_without_calling_jev(
         (tmp_path / "audit.jsonl").read_text(encoding="utf-8").splitlines()[-1]
     )
     assert record["error_category"] == "capacity"
+
+
+def test_explain_sends_the_preferences_file_and_never_audits_it(
+    tmp_path: Path,
+) -> None:
+    text = "Use deepseek-v4.1-flash through Pi as the workhorse."
+    directory = tmp_path / "herdr-jev-router"
+    directory.mkdir(mode=0o755)
+    directory.chmod(0o755)
+    (directory / "preferences.md").write_text(text, encoding="utf-8")
+    payloads: list[dict[str, object]] = []
+
+    def handler(request: Request):
+        payloads.append(json.loads(request.content))
+        return _quota_response(("claude", "codex"), selected="claude")
+
+    code, output = invoke_explain(
+        tmp_path,
+        partial(route_with_jev, transport=MockTransport(handler)),
+        extra=("--show-request",),
+        command_finder=_advisory_commands,
+        environ={
+            "TYPESAFE_API_KEY": "test-key",
+            "XDG_CONFIG_HOME": str(tmp_path),
+        },
+    )
+
+    assert code == 0
+    assert payloads[0]["state"]["preferences"] == text
+    # --show-request must print the same preferences the request carried.
+    document, _ = split_show_request(output)
+    assert document["state"]["preferences"] == text
+    record = json.loads(
+        (tmp_path / "audit.jsonl").read_text(encoding="utf-8").splitlines()[-1]
+    )
+    assert record["preferences"] == {"source": "file", "length": len(text)}
+    assert text not in json.dumps(record)
+
+
+@pytest.mark.parametrize("kind", ["symlink", "oversized", "group_writable"])
+def test_explain_denies_an_unsafe_preferences_file_with_a_stable_code(
+    tmp_path: Path, kind: str
+) -> None:
+    directory = tmp_path / "herdr-jev-router"
+    directory.mkdir(mode=0o755)
+    directory.chmod(0o755)
+    path = directory / "preferences.md"
+    if kind == "symlink":
+        path.symlink_to(tmp_path / "missing-target")
+    elif kind == "oversized":
+        path.write_text("x" * (MAX_PREFERENCES_BYTES + 1), encoding="utf-8")
+    else:
+        path.write_text("steer", encoding="utf-8")
+        directory.chmod(0o775)
+    called = False
+
+    async def fake_jev(**kwargs: object) -> JevRoutingResult:
+        nonlocal called
+        called = True
+        return jev_result()
+
+    code, output = invoke_explain(
+        tmp_path,
+        fake_jev,
+        environ={
+            "TYPESAFE_API_KEY": "test-key",
+            "XDG_CONFIG_HOME": str(tmp_path),
+        },
+    )
+
+    assert code == 2
+    assert json.loads(output)["denial"]["code"] == "invalid_preferences"
+    assert called is False
+
+
+def test_doctor_human_reports_the_preferences_in_use(tmp_path: Path) -> None:
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    directory = tmp_path / "herdr-jev-router"
+    directory.mkdir(mode=0o755)
+    directory.chmod(0o755)
+    (directory / "preferences.md").write_text("steer", encoding="utf-8")
+    stdout = io.StringIO()
+
+    code = main(
+        ["doctor", "--human", "--state-dir", str(state)],
+        stdout=stdout,
+        environ={
+            "TYPESAFE_API_KEY": "test-key",
+            "XDG_CONFIG_HOME": str(tmp_path),
+        },
+        command_finder=all_commands,
+        clock=lambda: 1_000.0,
+    )
+
+    assert code == 0
+    assert "preferences: file" in stdout.getvalue()
+
+
+def test_doctor_human_reports_the_built_in_default_preferences(
+    tmp_path: Path,
+) -> None:
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    stdout = io.StringIO()
+
+    code = main(
+        ["doctor", "--human", "--state-dir", str(state)],
+        stdout=stdout,
+        environ={"TYPESAFE_API_KEY": "test-key", "XDG_CONFIG_HOME": str(tmp_path)},
+        command_finder=all_commands,
+        clock=lambda: 1_000.0,
+    )
+
+    assert code == 0
+    assert "preferences: built-in default" in stdout.getvalue()
 
 
 def test_usage_reports_normalized_current_provider_capacity(tmp_path: Path) -> None:
@@ -722,6 +820,12 @@ def test_doctor_validates_credentials_permissions_files_and_commands(
     assert result["ok"] is True
     assert result["checks"] == {
         "credential": {"ok": True, "source": "environment"},
+        "preferences": {
+            "ok": True,
+            "source": "default",
+            "length": len(DEFAULT_PREFERENCES),
+            "problem": None,
+        },
         "state_directory": {"ok": True},
         "router_files": {
             "ok": True,
@@ -1103,7 +1207,7 @@ def _advisory_commands(name: str) -> str | None:
     return f"/usr/bin/{name}" if name in {"herdr", "claude", "codex"} else None
 
 
-def test_explain_removes_critical_codex_and_sends_claude_numbers_to_jev(
+def test_explain_sends_critical_codex_to_jev_with_its_numbers(
     tmp_path: Path,
 ) -> None:
     state = tmp_path / "state"
@@ -1112,7 +1216,7 @@ def test_explain_removes_critical_codex_and_sends_claude_numbers_to_jev(
 
     def handler(request: Request):
         payloads.append(json.loads(request.content))
-        return _quota_response(("claude",))
+        return _quota_response(("claude", "codex"), selected="claude")
 
     code, output = invoke_explain(
         tmp_path,
@@ -1123,23 +1227,26 @@ def test_explain_removes_critical_codex_and_sends_claude_numbers_to_jev(
     assert code == 0
     assert len(payloads) == 1
     capacity = payloads[0]["state"]["capacity"]
-    assert set(capacity) == {"claude"}
+    # Only installed and enabled harnesses are choices, but a critical one is
+    # still a choice: Jev decides, the router does not remove it.
+    assert set(capacity) == {"claude", "codex"}
     assert capacity["claude"] == {
         "state": "conserve",
-        "penalty": 0,
         "age_hours": 0,
         "five_hour_remaining_percent": 85,
         "five_hour_resets_in_hours": 2,
         "weekly_remaining_percent": 35,
         "weekly_resets_in_hours": 100,
     }
+    assert capacity["codex"]["state"] == "critical"
+    assert capacity["codex"]["weekly_remaining_percent"] == 6
+    assert all("penalty" not in entry for entry in capacity.values())
     assert "capacity codex: critical (codex weekly 6% left, resets in 38h)" in output
     record = json.loads(
         (tmp_path / "audit.jsonl").read_text(encoding="utf-8").splitlines()[-1]
     )
     assert record["capacity"]["codex"] == {
         "state": "critical",
-        "penalty": 0,
         "age_hours": 0,
         "five_hour_remaining_percent": None,
         "five_hour_resets_in_hours": None,
@@ -1149,6 +1256,7 @@ def test_explain_removes_critical_codex_and_sends_claude_numbers_to_jev(
     }
     assert record["capacity"]["claude"]["five_hour_remaining_percent"] == 85
     assert record["capacity"]["claude"]["weekly_remaining_percent"] == 35
+    assert all("penalty" not in entry for entry in record["capacity"].values())
 
 
 def test_explain_show_request_prints_the_payload_actually_sent_to_jev(
@@ -1160,7 +1268,7 @@ def test_explain_show_request_prints_the_payload_actually_sent_to_jev(
 
     def handler(request: Request):
         payloads.append(json.loads(request.content))
-        return _quota_response(("claude",))
+        return _quota_response(("claude", "codex"), selected="claude")
 
     code, output = invoke_explain(
         tmp_path,
@@ -1171,10 +1279,10 @@ def test_explain_show_request_prints_the_payload_actually_sent_to_jev(
 
     assert code == 0
     document, _ = split_show_request(output)
-    # The wire request drops critical codex and keeps Claude's quota numbers;
-    # the printed document must be that payload, not a second cache read.
+    # The wire request keeps Claude's and critical Codex's quota numbers; the
+    # printed document must be that payload, not a second cache read.
     assert document["state"] == payloads[0]["state"]
-    assert set(document["state"]["capacity"]) == {"claude"}
+    assert set(document["state"]["capacity"]) == {"claude", "codex"}
     assert document["questions"] == payloads[0]["questions"]
 
 
@@ -1218,7 +1326,7 @@ def test_doctor_human_reports_critical_with_the_reason(tmp_path: Path) -> None:
     )
 
 
-def test_explain_keeps_the_only_critical_provider_with_a_penalty(
+def test_explain_offers_a_lone_critical_provider_without_a_penalty(
     tmp_path: Path,
 ) -> None:
     state = tmp_path / "state"
@@ -1248,14 +1356,17 @@ def test_explain_keeps_the_only_critical_provider_with_a_penalty(
     )
 
     assert code == 0
-    assert payloads[0]["state"]["capacity"]["codex"]["penalty"] == 2
+    assert set(payloads[0]["state"]["capacity"]) == {"codex"}
+    assert payloads[0]["state"]["capacity"]["codex"]["state"] == "critical"
+    assert "penalty" not in payloads[0]["state"]["capacity"]["codex"]
     assert "capacity codex: critical (codex weekly 6% left, resets in 38h)" in output
     record = json.loads(
         (tmp_path / "audit.jsonl").read_text(encoding="utf-8").splitlines()[-1]
     )
     assert record["capacity"]["codex"]["state"] == "critical"
-    assert record["capacity"]["codex"]["penalty"] == 2
-    assert record["capacity"]["claude"]["state"] == "exhausted"
+    assert "penalty" not in record["capacity"]["codex"]
+    # A harness that is not installed is not a choice at all.
+    assert "claude" not in record["capacity"]
 
 
 def test_usage_calls_a_stale_near_empty_window_critical_with_the_reason(
@@ -1289,11 +1400,13 @@ def test_usage_calls_a_stale_near_empty_window_critical_with_the_reason(
     assert data["codex"]["reason"] == "codex weekly 6% left, resets in 38h"
 
 
-def test_explain_removes_a_stale_near_empty_provider(tmp_path: Path) -> None:
+def test_explain_keeps_a_stale_near_empty_provider_with_its_numbers(
+    tmp_path: Path,
+) -> None:
     state = tmp_path / "state"
     # Codex was observed at 600 and the test clock is 1000, so it is stale
     # (refresh floor 300) but still within the 6-hour maximum. A stale weekly
-    # window at 6% is still critical and must be removed.
+    # window at 6% is still critical, and critical is information, not a filter.
     write_cache(
         state / "codex-quota.json",
         QuotaSnapshot(
@@ -1318,7 +1431,7 @@ def test_explain_removes_a_stale_near_empty_provider(tmp_path: Path) -> None:
 
     def handler(request: Request):
         payloads.append(json.loads(request.content))
-        return _quota_response(("claude",))
+        return _quota_response(("claude", "codex"), selected="claude")
 
     code, output = invoke_explain(
         tmp_path,
@@ -1328,7 +1441,7 @@ def test_explain_removes_a_stale_near_empty_provider(tmp_path: Path) -> None:
 
     assert code == 0
     capacity = payloads[0]["state"]["capacity"]
-    assert set(capacity) == {"claude"}
+    assert set(capacity) == {"claude", "codex"}
     assert capacity["claude"]["age_hours"] == 0
     assert "capacity codex: critical (codex weekly 6% left, resets in 38h)" in output
     record = json.loads(

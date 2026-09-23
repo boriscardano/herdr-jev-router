@@ -6,9 +6,9 @@ configuration. The cache files are `codex-quota.json` and
 `claude-quota.json`; the router also reads `opencode-quota.json` and
 `pi-quota.json` when present. OpenCode and Pi have no collector yet, so when
 they are installed and opted in they are reported as `unknown` capacity and
-remain eligible with the deterministic penalty. A harness that is missing from
-`PATH` or not enabled is forced to `exhausted` before Jev. See
-[multi-harness-routing.md](multi-harness-routing.md).
+still sent to Jev. A harness that is missing from `PATH` or not enabled cannot
+be launched, so it is absent from the Jev request; quota never removes a
+provider. See [multi-harness-routing.md](multi-harness-routing.md).
 
 The router defaults to
 `$XDG_STATE_HOME/herdr-jev-router`, or
@@ -284,17 +284,17 @@ a test that proves it cannot create orphan processes.
 | Failure | Result | Routing effect |
 | --- | --- | --- |
 | Codex binary missing, app-server timeout, malformed JSONL, RPC error, or shutdown failure | Source error, last valid cache may remain stale | Codex is stale or unknown, never fresh |
-| Codex API-key authentication | Source is not a subscription source | Codex is unknown and ineligible for subscription balancing |
-| Codex valid zero remaining or explicit reached state | Valid exhausted window | Codex is removed before Jev |
+| Codex API-key authentication | Source is not a subscription source | Codex is unknown; Jev decides with that fact |
+| Codex valid zero remaining or explicit reached state | Valid exhausted window | Codex is `exhausted` and still sent to Jev |
 | Claude status-line feed absent before first API response | No observation | Claude is unknown, not exhausted |
 | Claude individual window absent or expired | Omit only that window | Other valid Claude windows remain usable |
 | Claude status-line parse or cache write failure | Source error, last valid cache may remain stale | Claude is stale or unknown |
 | Any cache older than six hours | Expired cache | Provider is unknown |
-| All providers unknown | Honest unknown state for every provider | Follow the `docs/design.md` capacity policy for whether unknown capacity remains eligible |
+| All providers unknown | Honest unknown state for every provider | Every launchable provider is still offered to Jev; see `docs/design.md` |
 
 The quota collector does not deny a spawn solely because a provider is
-unknown. The router removes exhausted providers, retains unknown providers
-with penalty `1`, and records source errors without secrets. Jev never
+unknown. The router sends every launchable provider, whatever its state, to
+Jev with its real numbers, and records source errors without secrets. Jev never
 receives raw timestamps, source response bodies, or credentials.
 
 ## Sources

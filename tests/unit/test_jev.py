@@ -15,11 +15,8 @@ from herdr_jev_router.models import (
     ProviderCapacity,
     QuotaDetail,
 )
-from herdr_jev_router.policy import (
-    CRITICAL_CAPACITY_PENALTY,
-    apply_critical_fallback,
-    validate_decision,
-)
+from herdr_jev_router.policy import validate_decision
+from herdr_jev_router.preferences import DEFAULT_PREFERENCES
 
 
 def valid_response() -> dict[str, object]:
@@ -190,10 +187,10 @@ def test_one_system_one_call_contains_six_typed_questions() -> None:
             "worktree": False,
             "network_required": False,
         },
+        "preferences": DEFAULT_PREFERENCES,
         "capacity": {
             "claude": {
                 "state": "on_pace",
-                "penalty": 0,
                 "age_hours": None,
                 "five_hour_remaining_percent": None,
                 "five_hour_resets_in_hours": None,
@@ -202,7 +199,6 @@ def test_one_system_one_call_contains_six_typed_questions() -> None:
             },
             "codex": {
                 "state": "surplus",
-                "penalty": 0,
                 "age_hours": None,
                 "five_hour_remaining_percent": None,
                 "five_hour_resets_in_hours": None,
@@ -211,7 +207,6 @@ def test_one_system_one_call_contains_six_typed_questions() -> None:
             },
             "opencode": {
                 "state": "on_pace",
-                "penalty": 0,
                 "age_hours": None,
                 "five_hour_remaining_percent": None,
                 "five_hour_resets_in_hours": None,
@@ -220,7 +215,6 @@ def test_one_system_one_call_contains_six_typed_questions() -> None:
             },
             "pi": {
                 "state": "on_pace",
-                "penalty": 0,
                 "age_hours": None,
                 "five_hour_remaining_percent": None,
                 "five_hour_resets_in_hours": None,
@@ -290,16 +284,53 @@ def test_missing_answer_fails_closed() -> None:
     assert error.value.code == "invalid_response"
 
 
-def test_harness_question_only_offers_eligible_providers() -> None:
+def test_preferences_are_sent_verbatim_with_a_pointer_in_instructions() -> None:
+    requests: list[Request] = []
+
+    def handler(request: Request) -> Response:
+        requests.append(request)
+        return response(valid_response())
+
+    call_with_transport(
+        MockTransport(handler),
+        preferences="Use deepseek-v4.1-flash through Pi as the workhorse.",
+    )
+
+    payload = json.loads(requests[0].content)
+    assert (
+        payload["state"]["preferences"]
+        == "Use deepseek-v4.1-flash through Pi as the workhorse."
+    )
+    pointer = "Follow the user's preferences in the state."
+    assert payload["questions"]["harness"]["instructions"].endswith(pointer)
+    assert payload["questions"]["effort"]["instructions"].endswith(pointer)
+    assert pointer not in payload["questions"]["codex_model"]["instructions"]
+
+
+def test_missing_preferences_send_the_built_in_default() -> None:
+    requests: list[Request] = []
+
+    def handler(request: Request) -> Response:
+        requests.append(request)
+        return response(valid_response())
+
+    call_with_transport(MockTransport(handler))
+
+    payload = json.loads(requests[0].content)
+    assert payload["state"]["preferences"] == DEFAULT_PREFERENCES
+
+
+def test_harness_question_offers_every_launchable_provider() -> None:
     body = valid_response()
     answers = body["answers"]
     assert isinstance(answers, dict)
     harness = answers["harness"]
     assert isinstance(harness, dict)
-    harness["probabilities"] = {"codex": 1.0}
+    harness["choice"] = "codex"
+    harness["probabilities"] = {"claude": 0.4, "codex": 0.6}
     capacities = (
         ProviderCapacity(Harness.CLAUDE, CapacityState.EXHAUSTED),
-        ProviderCapacity(Harness.CODEX, CapacityState.ON_PACE),
+        ProviderCapacity(Harness.CODEX, CapacityState.CRITICAL),
     )
     requests: list[Request] = []
 
@@ -313,8 +344,11 @@ def test_harness_question_only_offers_eligible_providers() -> None:
     )
 
     payload = json.loads(requests[0].content)
-    assert payload["questions"]["harness"]["criteria"] == {"codex": "Codex"}
-    assert set(payload["state"]["capacity"]) == {"codex"}
+    assert payload["questions"]["harness"]["criteria"] == {
+        "claude": "Claude Code",
+        "codex": "Codex",
+    }
+    assert set(payload["state"]["capacity"]) == {"claude", "codex"}
     assert validate_decision(result.answers, capacities).harness is Harness.CODEX
 
 
@@ -322,13 +356,6 @@ def test_harness_question_only_offers_eligible_providers() -> None:
     "capacities, expected_code",
     [
         ((), "no_eligible_provider"),
-        (
-            (
-                ProviderCapacity(Harness.CLAUDE, CapacityState.EXHAUSTED),
-                ProviderCapacity(Harness.CODEX, CapacityState.EXHAUSTED),
-            ),
-            "no_eligible_provider",
-        ),
         (
             (
                 ProviderCapacity(Harness.CODEX, CapacityState.ON_PACE),
@@ -724,12 +751,11 @@ def test_malformed_typed_answer_or_probability_map_fails_closed(case: str) -> No
     assert error.value.code == "invalid_response"
 
 
-def test_jev_state_carries_window_numbers_and_a_quota_preference() -> None:
+def test_jev_state_carries_window_numbers() -> None:
     capacities = (
         ProviderCapacity(
             Harness.CLAUDE,
             CapacityState.ON_PACE,
-            0,
             QuotaDetail(85, 2, 35, 100),
         ),
         ProviderCapacity(Harness.CODEX, CapacityState.SURPLUS),
@@ -747,7 +773,6 @@ def test_jev_state_carries_window_numbers_and_a_quota_preference() -> None:
     payload = json.loads(requests[0].content)
     assert payload["state"]["capacity"]["claude"] == {
         "state": "on_pace",
-        "penalty": 0,
         "age_hours": None,
         "five_hour_remaining_percent": 85,
         "five_hour_resets_in_hours": 2,
@@ -756,82 +781,55 @@ def test_jev_state_carries_window_numbers_and_a_quota_preference() -> None:
     }
     assert payload["state"]["capacity"]["codex"] == {
         "state": "surplus",
-        "penalty": 0,
         "age_hours": None,
         "five_hour_remaining_percent": None,
         "five_hour_resets_in_hours": None,
         "weekly_remaining_percent": None,
         "weekly_resets_in_hours": None,
     }
-    assert "remaining quota" in payload["questions"]["harness"]["instructions"]
 
 
-def test_jev_removes_a_critical_provider_when_an_alternative_remains() -> None:
-    body = valid_response()
-    answers = body["answers"]
-    assert isinstance(answers, dict)
-    harness = answers["harness"]
-    assert isinstance(harness, dict)
-    harness["choice"] = "claude"
-    harness["probabilities"] = {"claude": 1.0}
+def test_critical_and_exhausted_providers_reach_jev_with_their_numbers() -> None:
     capacities = (
-        ProviderCapacity(Harness.CLAUDE, CapacityState.ON_PACE),
+        ProviderCapacity(
+            Harness.CLAUDE,
+            CapacityState.ON_PACE,
+            QuotaDetail(85, 2, 35, 100),
+        ),
         ProviderCapacity(
             Harness.CODEX,
             CapacityState.CRITICAL,
-            0,
             QuotaDetail(None, None, 6, 38),
             "codex weekly 6% left, resets in 38h",
         ),
+        ProviderCapacity(
+            Harness.OPENCODE,
+            CapacityState.EXHAUSTED,
+            QuotaDetail(0, 1, 4, 120),
+        ),
+        ProviderCapacity(Harness.PI, CapacityState.UNKNOWN),
     )
     requests: list[Request] = []
 
     def handler(request: Request) -> Response:
         requests.append(request)
-        return response(body)
+        return response(valid_response())
 
     call_with_transport(MockTransport(handler), capacities=capacities)
 
     payload = json.loads(requests[0].content)
-    assert payload["questions"]["harness"]["criteria"] == {"claude": "Claude Code"}
-    assert set(payload["state"]["capacity"]) == {"claude"}
-
-
-def test_jev_offers_the_only_critical_provider_with_a_penalty() -> None:
-    body = valid_response()
-    answers = body["answers"]
-    assert isinstance(answers, dict)
-    harness = answers["harness"]
-    assert isinstance(harness, dict)
-    harness["probabilities"] = {"codex": 1.0}
-    capacities = apply_critical_fallback(
-        (
-            ProviderCapacity(
-                Harness.CODEX,
-                CapacityState.CRITICAL,
-                0,
-                QuotaDetail(None, None, 6, 38),
-                "codex weekly 6% left, resets in 38h",
-            ),
-            ProviderCapacity(Harness.CLAUDE, CapacityState.EXHAUSTED),
-        )
-    )
-    requests: list[Request] = []
-
-    def handler(request: Request) -> Response:
-        requests.append(request)
-        return response(body)
-
-    call_with_transport(MockTransport(handler), capacities=capacities)
-
-    payload = json.loads(requests[0].content)
-    assert payload["questions"]["harness"]["criteria"] == {"codex": "Codex"}
-    assert payload["state"]["capacity"]["codex"] == {
+    capacity = payload["state"]["capacity"]
+    assert set(capacity) == {"claude", "codex", "opencode", "pi"}
+    assert capacity["codex"] == {
         "state": "critical",
-        "penalty": CRITICAL_CAPACITY_PENALTY,
         "age_hours": None,
         "five_hour_remaining_percent": None,
         "five_hour_resets_in_hours": None,
         "weekly_remaining_percent": 6,
         "weekly_resets_in_hours": 38,
     }
+    assert capacity["opencode"]["five_hour_remaining_percent"] == 0
+    assert capacity["pi"]["state"] == "unknown"
+    assert all("penalty" not in entry for entry in capacity.values())
+    # Every feasible harness stays a choice, whatever its quota.
+    assert set(payload["questions"]["harness"]["criteria"]) == set(capacity)

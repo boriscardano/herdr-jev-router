@@ -19,11 +19,7 @@ from herdr_jev_router.models import (
     QuotaDetail,
     RoutingDecision,
 )
-from herdr_jev_router.policy import (
-    CRITICAL_CAPACITY_PENALTY,
-    apply_critical_fallback,
-    route_eligible,
-)
+from herdr_jev_router.preferences import DEFAULT_PREFERENCES, Preferences
 from herdr_jev_router.router import RouterError, recommend
 
 
@@ -189,6 +185,7 @@ def test_recommend_calls_jev_once_and_persists_audit_before_returning(
             "network_required": False,
         },
         "capacities": capacities(),
+        "preferences": DEFAULT_PREFERENCES,
     }
     assert result.recommended == RoutingDecision(
         Harness.CODEX,
@@ -213,6 +210,10 @@ def test_recommend_calls_jev_once_and_persists_audit_before_returning(
                 "worktree": False,
                 "network_required": False,
             },
+        },
+        "preferences": {
+            "source": "default",
+            "length": len(DEFAULT_PREFERENCES),
         },
         "capacity": {
             "claude": _audited_capacity(
@@ -268,51 +269,21 @@ def test_recommend_matrix_accepts_and_audits_every_capacity_state(
     codex_state: CapacityState,
 ) -> None:
     capacities_snapshot = (
-        ProviderCapacity(
-            Harness.CLAUDE,
-            claude_state,
-            1 if claude_state is CapacityState.UNKNOWN else 0,
-        ),
-        ProviderCapacity(
-            Harness.CODEX, codex_state, 1 if codex_state is CapacityState.UNKNOWN else 0
-        ),
+        ProviderCapacity(Harness.CLAUDE, claude_state),
+        ProviderCapacity(Harness.CODEX, codex_state),
     )
-    eligible = tuple(
-        capacity.harness for capacity in route_eligible(capacities_snapshot)
-    )
-    if not eligible:
-        called = False
-
-        async def no_provider_jev(**kwargs: object) -> JevRoutingResult:
-            nonlocal called
-            called = True
-            return matrix_jev_result(eligible_harnesses=())
-
-        with pytest.raises(RouterError) as error:
-            run_recommend(
-                tmp_path,
-                no_provider_jev,
-                capacities=capacities_snapshot,
-            )
-        assert error.value.code == "no_eligible_provider"
-        assert called is False
-        assert audit_record(tmp_path)["error_category"] == "capacity"
-        return
-    selected = eligible[0]
+    eligible = (Harness.CLAUDE, Harness.CODEX)
 
     async def fake_jev(**kwargs: object) -> JevRoutingResult:
         return matrix_jev_result(
-            harness=selected,
+            harness=Harness.CLAUDE,
             eligible_harnesses=eligible,
         )
 
     result = run_recommend(tmp_path, fake_jev, capacities=capacities_snapshot)
 
-    effective = {
-        capacity.harness: capacity
-        for capacity in apply_critical_fallback(capacities_snapshot)
-    }
-    assert result.recommended.harness is selected
+    effective = {capacity.harness: capacity for capacity in capacities_snapshot}
+    assert result.recommended.harness is Harness.CLAUDE
     assert audit_record(tmp_path)["capacity"] == {
         "claude": _audited_capacity(effective[Harness.CLAUDE]),
         "codex": _audited_capacity(effective[Harness.CODEX]),
@@ -322,7 +293,6 @@ def test_recommend_matrix_accepts_and_audits_every_capacity_state(
 def _audited_capacity(capacity: ProviderCapacity) -> dict[str, object]:
     return {
         "state": capacity.state.value,
-        "penalty": capacity.penalty,
         "age_hours": capacity.age_hours,
         "five_hour_remaining_percent": None,
         "five_hour_resets_in_hours": None,
@@ -460,6 +430,29 @@ def test_jev_failure_is_audited_without_raw_exception_data(tmp_path: Path) -> No
     assert "secret provider body" not in serialized
 
 
+def test_audit_records_preferences_source_and_length_but_not_text(
+    tmp_path: Path,
+) -> None:
+    text = "Always try Pi first with deepseek-v4.1-flash."
+    captured: list[dict[str, object]] = []
+
+    async def fake_jev(**kwargs: object) -> JevRoutingResult:
+        captured.append(kwargs)
+        return jev_result()
+
+    run_recommend(
+        tmp_path,
+        fake_jev,
+        preferences=Preferences(text, "file"),
+    )
+
+    # Jev receives the exact text; the audit only records where it came from.
+    assert captured[0]["preferences"] == text
+    record = audit_record(tmp_path)
+    assert record["preferences"] == {"source": "file", "length": len(text)}
+    assert text not in json.dumps(record)
+
+
 def test_non_jev_failure_is_audited_without_a_jev_error_code(tmp_path: Path) -> None:
     async def failing_jev(**kwargs: object) -> JevRoutingResult:
         raise RuntimeError("unexpected private detail")
@@ -559,7 +552,7 @@ def test_recommend_accepts_two_decimal_rounded_jev_probabilities(
     }
 
 
-def test_recommend_fails_without_calling_jev_when_all_capacity_is_exhausted(
+def test_recommend_fails_without_calling_jev_when_no_harness_is_launchable(
     tmp_path: Path,
 ) -> None:
     called = False
@@ -570,14 +563,7 @@ def test_recommend_fails_without_calling_jev_when_all_capacity_is_exhausted(
         return matrix_jev_result(eligible_harnesses=())
 
     with pytest.raises(RouterError) as error:
-        run_recommend(
-            tmp_path,
-            fake_jev,
-            capacities=(
-                ProviderCapacity(Harness.CLAUDE, CapacityState.EXHAUSTED),
-                ProviderCapacity(Harness.CODEX, CapacityState.EXHAUSTED),
-            ),
-        )
+        run_recommend(tmp_path, fake_jev, capacities=())
 
     assert error.value.code == "no_eligible_provider"
     assert called is False
@@ -587,13 +573,46 @@ def test_recommend_fails_without_calling_jev_when_all_capacity_is_exhausted(
     assert record["error_category"] == "capacity"
 
 
+def test_recommend_sends_exhausted_and_critical_providers_to_jev(
+    tmp_path: Path,
+) -> None:
+    captured: list[dict[str, object]] = []
+
+    async def fake_jev(**kwargs: object) -> JevRoutingResult:
+        captured.append(kwargs)
+        return matrix_jev_result(
+            harness=Harness.CODEX,
+            eligible_harnesses=(Harness.CLAUDE, Harness.CODEX),
+        )
+
+    capacities_snapshot = (
+        ProviderCapacity(
+            Harness.CLAUDE, CapacityState.EXHAUSTED, QuotaDetail(0, 1, 4, 120)
+        ),
+        ProviderCapacity(
+            Harness.CODEX,
+            CapacityState.CRITICAL,
+            QuotaDetail(None, None, 6, 38),
+            "codex weekly 6% left, resets in 38h",
+        ),
+    )
+
+    result = run_recommend(tmp_path, fake_jev, capacities=capacities_snapshot)
+
+    assert result.recommended.harness is Harness.CODEX
+    assert captured[0]["capacities"] == capacities_snapshot
+    record = audit_record(tmp_path)["capacity"]
+    assert record["claude"]["state"] == "exhausted"
+    assert record["codex"]["state"] == "critical"
+    assert all("penalty" not in entry for entry in record.values())
+
+
 def test_audit_records_the_same_quota_numbers_sent_to_jev(tmp_path: Path) -> None:
 
     capacities_snapshot = (
         ProviderCapacity(
             Harness.CLAUDE,
             CapacityState.ON_PACE,
-            0,
             QuotaDetail(85, 2, 35, 100),
         ),
         ProviderCapacity(Harness.CODEX, CapacityState.SURPLUS),
@@ -609,7 +628,6 @@ def test_audit_records_the_same_quota_numbers_sent_to_jev(tmp_path: Path) -> Non
     capacity = audit_record(tmp_path)["capacity"]
     assert capacity["claude"] == {
         "state": "on_pace",
-        "penalty": 0,
         "age_hours": None,
         "five_hour_remaining_percent": 85,
         "five_hour_resets_in_hours": 2,
@@ -619,7 +637,6 @@ def test_audit_records_the_same_quota_numbers_sent_to_jev(tmp_path: Path) -> Non
     }
     assert capacity["codex"] == {
         "state": "surplus",
-        "penalty": 0,
         "age_hours": None,
         "five_hour_remaining_percent": None,
         "five_hour_resets_in_hours": None,
@@ -629,14 +646,13 @@ def test_audit_records_the_same_quota_numbers_sent_to_jev(tmp_path: Path) -> Non
     }
 
 
-def test_audit_explains_a_removed_critical_provider(tmp_path: Path) -> None:
+def test_audit_explains_a_critical_provider(tmp_path: Path) -> None:
 
     capacities_snapshot = (
         ProviderCapacity(Harness.CLAUDE, CapacityState.ON_PACE),
         ProviderCapacity(
             Harness.CODEX,
             CapacityState.CRITICAL,
-            0,
             QuotaDetail(None, None, 6, 38),
             "codex weekly 6% left, resets in 38h",
         ),
@@ -644,7 +660,8 @@ def test_audit_explains_a_removed_critical_provider(tmp_path: Path) -> None:
 
     async def fake_jev(**kwargs: object) -> JevRoutingResult:
         return matrix_jev_result(
-            harness=Harness.CLAUDE, eligible_harnesses=(Harness.CLAUDE,)
+            harness=Harness.CLAUDE,
+            eligible_harnesses=(Harness.CLAUDE, Harness.CODEX),
         )
 
     result = run_recommend(tmp_path, fake_jev, capacities=capacities_snapshot)
@@ -652,7 +669,6 @@ def test_audit_explains_a_removed_critical_provider(tmp_path: Path) -> None:
     assert result.recommended.harness is Harness.CLAUDE
     assert audit_record(tmp_path)["capacity"]["codex"] == {
         "state": "critical",
-        "penalty": 0,
         "age_hours": None,
         "five_hour_remaining_percent": None,
         "five_hour_resets_in_hours": None,
@@ -662,7 +678,7 @@ def test_audit_explains_a_removed_critical_provider(tmp_path: Path) -> None:
     }
 
 
-def test_recommend_rejects_jev_selecting_a_removed_critical_provider(
+def test_recommend_accepts_jev_selecting_a_critical_provider(
     tmp_path: Path,
 ) -> None:
     capacities_snapshot = (
@@ -676,33 +692,7 @@ def test_recommend_rejects_jev_selecting_a_removed_critical_provider(
             eligible_harnesses=(Harness.CLAUDE, Harness.CODEX),
         )
 
-    with pytest.raises(RouterError) as error:
-        run_recommend(tmp_path, fake_jev, capacities=capacities_snapshot)
-
-    assert error.value.code == "validation_failed"
-    assert audit_record(tmp_path)["error_category"] == "validation"
-
-
-def test_recommend_applies_the_critical_fallback_penalty(tmp_path: Path) -> None:
-    capacities_snapshot = (
-        ProviderCapacity(
-            Harness.CODEX,
-            CapacityState.CRITICAL,
-            0,
-            QuotaDetail(None, None, 6, 38),
-            "codex weekly 6% left, resets in 38h",
-        ),
-    )
-
-    async def fake_jev(**kwargs: object) -> JevRoutingResult:
-        return matrix_jev_result(
-            harness=Harness.CODEX, eligible_harnesses=(Harness.CODEX,)
-        )
-
     result = run_recommend(tmp_path, fake_jev, capacities=capacities_snapshot)
 
-    assert result.capacities[0].penalty == CRITICAL_CAPACITY_PENALTY
-    assert (
-        audit_record(tmp_path)["capacity"]["codex"]["penalty"]
-        == CRITICAL_CAPACITY_PENALTY
-    )
+    assert result.recommended.harness is Harness.CODEX
+    assert audit_record(tmp_path)["error_category"] is None

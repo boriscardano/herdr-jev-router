@@ -87,33 +87,14 @@ def test_harness_launch_requires_non_empty_models() -> None:
         harness_launch(models={"deepseek": "", "glm": "g", "kimi": "k"})
 
 
-def test_unknown_capacity_requires_a_positive_penalty() -> None:
-    with pytest.raises(ValueError, match="unknown capacity requires a penalty"):
-        ProviderCapacity(
-            harness=Harness.CODEX,
-            state=CapacityState.UNKNOWN,
-        )
+@pytest.mark.parametrize(
+    "state",
+    [CapacityState.SURPLUS, CapacityState.UNKNOWN, CapacityState.CRITICAL],
+)
+def test_provider_capacity_carries_no_penalty(state: CapacityState) -> None:
+    capacity = ProviderCapacity(harness=Harness.CODEX, state=state)
 
-
-def test_known_capacity_rejects_a_penalty() -> None:
-    with pytest.raises(
-        ValueError, match="only unknown or critical capacity may have a penalty"
-    ):
-        ProviderCapacity(
-            harness=Harness.CLAUDE,
-            state=CapacityState.SURPLUS,
-            penalty=1,
-        )
-
-
-@pytest.mark.parametrize("penalty", [True, 1.5])
-def test_capacity_penalty_must_be_an_exact_integer(penalty: object) -> None:
-    with pytest.raises(TypeError, match="penalty must be an integer"):
-        ProviderCapacity(
-            harness=Harness.CODEX,
-            state=CapacityState.UNKNOWN,
-            penalty=penalty,  # type: ignore[arg-type]
-        )
+    assert not hasattr(capacity, "penalty")
 
 
 def decision_kwargs(**changes: object) -> dict[str, object]:
@@ -226,15 +207,6 @@ def test_provider_capacity_rejects_a_non_quota_detail_and_bad_reason() -> None:
             harness=Harness.CODEX,
             state=CapacityState.CRITICAL,
             reason="",
-        )
-
-
-def test_critical_capacity_rejects_a_negative_penalty() -> None:
-    with pytest.raises(ValueError, match="penalty must not be negative"):
-        ProviderCapacity(
-            harness=Harness.CODEX,
-            state=CapacityState.CRITICAL,
-            penalty=-1,
         )
 
 

@@ -44,16 +44,20 @@ Proxy support is kept, because the SDK builds a default client with `trust_env`
 enabled.
 
 `state` may be a string, JSON object, or array. For the router it is a small
-JSON object containing the delegated task, role, normalized constraints, and
-normalized provider capacity. Each eligible provider entry carries `state`,
-`penalty`, `age_hours`, and the four quota numbers
+JSON object containing the delegated task, role, normalized constraints, the
+user's plain-words routing preferences, and normalized provider capacity. Each
+launchable provider entry carries `state`, `age_hours`, and the four quota numbers
 `five_hour_remaining_percent`, `five_hour_resets_in_hours`,
 `weekly_remaining_percent`, and `weekly_resets_in_hours`. `age_hours` is the
 rounded age of the cache and is `null` when there is no usable cache. A quota
 number is `null` when that window is missing or the cache is expired; reset
 values are hours from now, never raw timestamps. Any unexpired cache is used,
-fresh or stale, because a quota window cannot recover between refreshes. Do not
-include credentials, raw quota timestamps, or unrelated repository content.
+fresh or stale, because a quota window cannot recover between refreshes. Every
+installed and enabled provider is sent whatever its state, including
+`critical`, `exhausted`, and `unknown`; there is no penalty field and no
+quota-based removal. `preferences` is the user's text verbatim, or the router's
+built-in default when no file is present. Do not include credentials, raw quota
+timestamps, or unrelated repository content.
 
 Each question has a map key chosen by the caller, a typed question object,
 `instructions`, and, for `Choice`, a required criteria map. Instructions and
@@ -66,9 +70,8 @@ The request shape is:
 questions = {
     "harness": Choice(
         instructions=(
-            "Which harness is the better fit for this delegated task? When "
-            "more than one harness fits, prefer the provider with more "
-            "remaining quota."
+            "Which harness is the better fit for this delegated task? "
+            "Follow the user's preferences in the state."
         ),
         criteria={
             "claude": "Claude Code",
@@ -110,7 +113,10 @@ questions = {
         },
     ),
     "effort": Choice(
-        instructions="Which reasoning effort is appropriate for this task?",
+        instructions=(
+            "Which reasoning effort is appropriate for this task? "
+            "Follow the user's preferences in the state."
+        ),
         criteria={
             "low": None,
             "medium": None,
@@ -126,10 +132,10 @@ response = await client.system_one(
         "task": delegated_task,
         "role": role,
         "constraints": normalized_constraints,
+        "preferences": preferences_text,
         "capacity": {
             "claude": {
                 "state": "conserve",
-                "penalty": 0,
                 "age_hours": 0.1,
                 "five_hour_remaining_percent": 85,
                 "five_hour_resets_in_hours": 2,
