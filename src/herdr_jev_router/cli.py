@@ -586,7 +586,7 @@ def _has_surrogate(text: str) -> bool:
 
 
 def _has_visible_character(text: str) -> bool:
-    """Report whether `text` has a character that is neither space nor format."""
+    """Report whether `text` has a character that is neither whitespace nor Cf."""
 
     return any(
         not character.isspace() and unicodedata.category(character) != "Cf"
