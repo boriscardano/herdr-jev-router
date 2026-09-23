@@ -579,9 +579,10 @@ def test_explain_sends_the_preferences_file_and_never_audits_it(
         payloads.append(json.loads(request.content))
         return _quota_response(("claude", "codex"), selected="claude")
 
-    code, _ = invoke_explain(
+    code, output = invoke_explain(
         tmp_path,
         partial(route_with_jev, transport=MockTransport(handler)),
+        extra=("--show-request",),
         command_finder=_advisory_commands,
         environ={
             "TYPESAFE_API_KEY": "test-key",
@@ -591,6 +592,9 @@ def test_explain_sends_the_preferences_file_and_never_audits_it(
 
     assert code == 0
     assert payloads[0]["state"]["preferences"] == text
+    # --show-request must print the same preferences the request carried.
+    document, _ = split_show_request(output)
+    assert document["state"]["preferences"] == text
     record = json.loads(
         (tmp_path / "audit.jsonl").read_text(encoding="utf-8").splitlines()[-1]
     )

@@ -28,6 +28,7 @@ from herdr_jev_router.jev import JevRequest, build_jev_request, route_with_jev
 from herdr_jev_router.models import Effort, Harness, ProviderCapacity
 from herdr_jev_router.policy import RoutingPolicyError, launch_profile
 from herdr_jev_router.preferences import (
+    Preferences,
     PreferencesError,
     resolve_preferences,
 )
@@ -673,6 +674,15 @@ def _constraints(arguments: argparse.Namespace) -> dict[str, bool]:
     }
 
 
+def _preferences_or_fail(environment: Mapping[str, str]) -> Preferences:
+    """Return the preferences in use, or fail closed on an unsafe file."""
+
+    resolution = resolve_preferences(environment)
+    if resolution.problem is not None:
+        raise PreferencesError(resolution.problem)
+    return resolution.preferences
+
+
 def _recommend_decision(
     *,
     request_id: str,
@@ -682,6 +692,7 @@ def _recommend_decision(
     state_dir: Path,
     audit_path: Path | None,
     environment: Mapping[str, str],
+    preferences: Preferences,
     jev_callable: JevCallable,
     clock: Clock,
     availability: HarnessAvailability,
@@ -691,9 +702,6 @@ def _recommend_decision(
     api_key = _resolve_key(environment).key
     if api_key is None:
         raise _ConfigurationError
-    preference_resolution = resolve_preferences(environment)
-    if preference_resolution.problem is not None:
-        raise PreferencesError(preference_resolution.problem)
     capacities = _capacity_snapshot_for(state_dir, clock, enabled=availability.enabled)
 
     async def configured_jev(**kwargs: object) -> object:
@@ -707,7 +715,7 @@ def _recommend_decision(
             constraints=constraints,
             capacities=capacities,
             audit_path=audit_path or state_dir / "routing.jsonl",
-            preferences=preference_resolution.preferences,
+            preferences=preferences,
             jev_callable=configured_jev,
             clock=clock,
         )
@@ -742,6 +750,7 @@ def _spawn_command(
         state_dir=arguments.state_dir,
         audit_path=arguments.audit_path,
         environment=environment,
+        preferences=_preferences_or_fail(environment),
         jev_callable=jev_callable,
         clock=clock,
         availability=availability,
@@ -800,6 +809,7 @@ def _explain_command(
     task = _task_text(arguments.task)
     role = _role(arguments.role)
     constraints = _constraints(arguments)
+    preferences = _preferences_or_fail(environment)
     recommendation = _recommend_decision(
         request_id=request_id,
         task=task,
@@ -808,18 +818,20 @@ def _explain_command(
         state_dir=arguments.state_dir,
         audit_path=arguments.audit_path,
         environment=environment,
+        preferences=preferences,
         jev_callable=jev_callable,
         clock=clock,
         availability=availability,
     )
-    # Rebuild from the same snapshot `recommend` sent to Jev, so the printed
-    # request and the wire request are built by the same function.
+    # Rebuild from the same snapshot and preferences `recommend` sent to Jev,
+    # so the printed request and the wire request go through one function.
     request = (
         build_jev_request(
             task=task,
             role=role,
             constraints=constraints,
             capacities=recommendation.capacities,
+            preferences=preferences.text,
         )
         if arguments.show_request
         else None
