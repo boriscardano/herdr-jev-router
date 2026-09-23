@@ -1118,6 +1118,33 @@ def test_explain_removes_critical_codex_and_sends_claude_numbers_to_jev(
     assert record["capacity"]["claude"]["weekly_remaining_percent"] == 35
 
 
+def test_explain_show_request_prints_the_payload_actually_sent_to_jev(
+    tmp_path: Path,
+) -> None:
+    state = tmp_path / "state"
+    _claude_and_critical_codex(state)
+    payloads: list[dict[str, object]] = []
+
+    def handler(request: Request):
+        payloads.append(json.loads(request.content))
+        return _quota_response(("claude",))
+
+    code, output = invoke_explain(
+        tmp_path,
+        partial(route_with_jev, transport=MockTransport(handler)),
+        extra=("--show-request",),
+        command_finder=_advisory_commands,
+    )
+
+    assert code == 0
+    document, _ = split_show_request(output)
+    # The wire request drops critical codex and keeps Claude's quota numbers;
+    # the printed document must be that payload, not a second cache read.
+    assert document["state"] == payloads[0]["state"]
+    assert set(document["state"]["capacity"]) == {"claude"}
+    assert document["questions"] == payloads[0]["questions"]
+
+
 def test_usage_reports_critical_with_the_reason(tmp_path: Path) -> None:
     state = tmp_path / "state"
     _claude_and_critical_codex(state)
