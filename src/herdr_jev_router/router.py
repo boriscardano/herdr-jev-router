@@ -15,6 +15,7 @@ from herdr_jev_router.models import (
 )
 from herdr_jev_router.policy import (
     RoutingPolicyError,
+    apply_critical_fallback,
     route_eligible,
     validate_decision,
 )
@@ -70,7 +71,9 @@ async def recommend(
     """Call Jev once and durably return the validated recommendation."""
 
     constraints_snapshot = dict(constraints)
-    capacities_snapshot = tuple(capacities)
+    # The critical fallback is hard policy, applied in the single routing path
+    # so every caller and the audit see the same effective penalties.
+    capacities_snapshot = apply_critical_fallback(tuple(capacities))
     record = _v2_record(
         phase="recommendation",
         request_id=request_id,

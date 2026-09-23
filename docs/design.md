@@ -109,9 +109,13 @@ Claude's `five_hour`/`seven_day` and Codex's `primary`/`secondary` map the same
 way. The state is one of `surplus`, `on_pace`, `conserve`, `unknown`,
 `critical`, or `exhausted`:
 
-- `unknown`: the cache is missing, expired, or stale. Jev receives `null` for
-every quota number, never a guess. Unknown providers stay eligible with penalty
-1.
+- `unknown`: the cache is missing or older than the 6-hour maximum. Jev
+receives `null` for every quota number, never a guess. Unknown providers stay
+eligible with penalty 1.
+- A stale-but-valid cache, older than the provider refresh floor but within the
+6-hour maximum, keeps its pace-based `surplus`/`on_pace`/`conserve` state, but
+its quota numbers are `null` and it is never `critical`. The router does not
+remove a provider on stale data.
 - `exhausted`: a valid zero-remaining window or an explicit reached signal.
 Exhausted providers are always removed before Jev.
 - `critical`: a known fresh window has under 10 percent remaining and resets

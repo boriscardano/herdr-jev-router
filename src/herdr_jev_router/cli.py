@@ -35,7 +35,6 @@ from herdr_jev_router.models import (
 from herdr_jev_router.policy import (
     UNKNOWN_CAPACITY_PENALTY,
     RoutingPolicyError,
-    apply_critical_fallback,
     launch_profile,
 )
 from herdr_jev_router.quota import (
@@ -939,9 +938,9 @@ def _capacity_snapshot(
         )
         for harness, assessment in assessments.items()
     )
-    # The critical fallback is hard policy: keep critical providers eligible
-    # with a deterministic penalty only when nothing else would remain.
-    return apply_critical_fallback(capacities)
+    # The critical fallback penalty is applied in recommend(), the single
+    # routing path, so the audit and the Jev state always agree.
+    return capacities
 
 
 def _capacity_snapshot_for(
