@@ -868,6 +868,40 @@ def test_spawn_fails_closed_when_audit_write_fails(
     assert read_log(log) == []
 
 
+def test_spawn_sends_the_preferences_file_to_jev(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    executable, _ = fake_herdr(tmp_path, monkeypatch)
+    config = tmp_path / "herdr-jev-router"
+    config.mkdir(mode=0o755)
+    config.chmod(0o755)
+    text = "Prefer Pi deepseek for routine work."
+    (config / "preferences.md").write_text(text, encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    async def fake_jev(**kwargs: object) -> JevRoutingResult:
+        captured.update(kwargs)
+        return jev_result()
+
+    code, _ = run_spawn(
+        spawn_argv(),
+        tmp_path,
+        herdr_command=executable,
+        jev_callable=fake_jev,
+        environ={
+            "TYPESAFE_API_KEY": "test-key",
+            "XDG_CONFIG_HOME": str(tmp_path),
+        },
+    )
+
+    assert code == 0
+    assert captured["preferences"] == text
+    record = json.loads(
+        (tmp_path / "audit.jsonl").read_text(encoding="utf-8").splitlines()[-1]
+    )
+    assert record["preferences"] == {"source": "file", "length": len(text)}
+
+
 def test_spawn_offers_exhausted_providers_to_jev(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

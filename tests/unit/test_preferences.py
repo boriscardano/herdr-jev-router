@@ -38,6 +38,14 @@ def test_missing_file_uses_the_built_in_default(tmp_path: Path) -> None:
     assert resolution.preferences.length == len(DEFAULT_PREFERENCES)
 
 
+def test_default_preferences_cover_cost_quota_and_effort() -> None:
+    lowered = DEFAULT_PREFERENCES.lower()
+
+    assert "cheapest" in lowered
+    assert "quota" in lowered
+    assert "effort" in lowered
+
+
 def test_preferences_path_prefers_xdg_then_home(tmp_path: Path, monkeypatch) -> None:
     assert preferences_path({"XDG_CONFIG_HOME": str(tmp_path)}) == (
         tmp_path / "herdr-jev-router" / "preferences.md"
