@@ -42,7 +42,7 @@ Codex app-server JSONL ─┐
 Claude statusLine JSON ─┘
 ```
 
-Each source owns its own cache and freshness. A failure in one source must not erase or relabel the other source. A missing or stale source is `unknown`, not `exhausted`. Only an explicit provider signal or a valid window at zero remaining capacity can produce `exhausted`.
+Each source owns its own cache and freshness. A failure in one source must not erase or relabel the other source. A missing or expired source is `unknown`, not `exhausted`. An unexpired cache is used for the quota numbers and the critical rule even when it is labeled stale, because a quota window cannot recover between refreshes. Only an explicit provider signal or a valid window at zero remaining capacity can produce `exhausted`.
 
 The collector must persist normalized quota only. It must never persist source response bodies, credentials, authorization headers, session identifiers, transcript paths, prompts, responses, repository paths, or account identifiers.
 
@@ -149,10 +149,10 @@ The current parser:
 
 The classifier uses valid future-reset windows. A valid zero remaining window or
 an explicit reached state makes Codex `exhausted`. Missing, malformed, or
-expired source data becomes `unknown`. A fresh window under 10 percent
-remaining that resets more than 12 hours from now makes Codex `critical`. The
-implementation does not treat the 10,080-minute weekly window as the only
-possible Codex quota.
+expired source data becomes `unknown`. A known window under 10 percent
+remaining that resets more than 12 hours from now makes Codex `critical`, fresh
+or stale. The implementation does not treat the 10,080-minute weekly window as
+the only possible Codex quota.
 
 ## Claude Code source
 

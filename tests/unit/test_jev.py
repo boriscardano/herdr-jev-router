@@ -162,6 +162,7 @@ def test_one_system_one_call_contains_six_typed_questions() -> None:
             "claude": {
                 "state": "on_pace",
                 "penalty": 0,
+                "age_hours": None,
                 "five_hour_remaining_percent": None,
                 "five_hour_resets_in_hours": None,
                 "weekly_remaining_percent": None,
@@ -170,6 +171,7 @@ def test_one_system_one_call_contains_six_typed_questions() -> None:
             "codex": {
                 "state": "surplus",
                 "penalty": 0,
+                "age_hours": None,
                 "five_hour_remaining_percent": None,
                 "five_hour_resets_in_hours": None,
                 "weekly_remaining_percent": None,
@@ -178,6 +180,7 @@ def test_one_system_one_call_contains_six_typed_questions() -> None:
             "opencode": {
                 "state": "on_pace",
                 "penalty": 0,
+                "age_hours": None,
                 "five_hour_remaining_percent": None,
                 "five_hour_resets_in_hours": None,
                 "weekly_remaining_percent": None,
@@ -186,6 +189,7 @@ def test_one_system_one_call_contains_six_typed_questions() -> None:
             "pi": {
                 "state": "on_pace",
                 "penalty": 0,
+                "age_hours": None,
                 "five_hour_remaining_percent": None,
                 "five_hour_resets_in_hours": None,
                 "weekly_remaining_percent": None,
@@ -646,6 +650,7 @@ def test_jev_state_carries_window_numbers_and_a_quota_preference() -> None:
     assert payload["state"]["capacity"]["claude"] == {
         "state": "on_pace",
         "penalty": 0,
+        "age_hours": None,
         "five_hour_remaining_percent": 85,
         "five_hour_resets_in_hours": 2,
         "weekly_remaining_percent": 35,
@@ -654,6 +659,7 @@ def test_jev_state_carries_window_numbers_and_a_quota_preference() -> None:
     assert payload["state"]["capacity"]["codex"] == {
         "state": "surplus",
         "penalty": 0,
+        "age_hours": None,
         "five_hour_remaining_percent": None,
         "five_hour_resets_in_hours": None,
         "weekly_remaining_percent": None,
@@ -725,6 +731,7 @@ def test_jev_offers_the_only_critical_provider_with_a_penalty() -> None:
     assert payload["state"]["capacity"]["codex"] == {
         "state": "critical",
         "penalty": CRITICAL_CAPACITY_PENALTY,
+        "age_hours": None,
         "five_hour_remaining_percent": None,
         "five_hour_resets_in_hours": None,
         "weekly_remaining_percent": 6,

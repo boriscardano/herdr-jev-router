@@ -410,8 +410,7 @@ def test_window_mapping_is_by_length_not_provider_specific_names() -> None:
     assert assess_capacity(codex, now=now).quota == QuotaDetail(85, 2, 6, 38)
 
 
-def test_unknown_or_stale_windows_give_null_quota_never_a_guess() -> None:
-
+def test_missing_or_expired_windows_give_null_quota_never_a_guess() -> None:
     now = 1_000.0
     empty = QuotaDetail()
 
@@ -429,16 +428,49 @@ def test_unknown_or_stale_windows_give_null_quota_never_a_guess() -> None:
         ).quota
         == empty
     )
-    # A stale cache keeps its state label but must not send stale numbers.
+    # An expired cache is discarded, not used, and reports no age.
+    expired = _snapshot_with_windows(
+        "codex",
+        (QuotaWindow("primary", 94, 6, 604_800, now + 38 * 3_600),),
+        observed_at=now - CACHE_MAX_AGE_SECONDS,
+        freshness="stale",
+    )
+    expired_assessment = assess_capacity(expired, now=now)
+    assert expired_assessment.state is CapacityState.UNKNOWN
+    assert expired_assessment.quota == empty
+    assert expired_assessment.age_hours is None
+    assert expired_assessment.reason is None
+
+
+def test_stale_but_unexpired_windows_are_used_and_reported_with_their_age() -> None:
+    now = 1_000.0
+    # A weekly window cannot recover in minutes, so a stale-but-unexpired Codex
+    # cache still yields its numbers and the critical rule. The collector skips
+    # refreshes under five minutes, so this is the common live case.
     stale = _snapshot_with_windows(
         "codex",
         (QuotaWindow("primary", 94, 6, 604_800, now + 38 * 3_600),),
+        observed_at=now - 3_600,
         freshness="stale",
     )
-    stale_assessment = assess_capacity(stale, now=now)
-    assert stale_assessment.quota == empty
-    assert stale_assessment.state is not CapacityState.CRITICAL
-    assert stale_assessment.reason is None
+
+    assessment = assess_capacity(stale, now=now)
+
+    assert assessment.state is CapacityState.CRITICAL
+    assert assessment.quota == QuotaDetail(None, None, 6, 38)
+    assert assessment.age_hours == 1
+    assert assessment.reason == "codex weekly 6% left, resets in 38h"
+
+
+def test_fresh_windows_report_a_rounded_age() -> None:
+    now = 1_000.0
+    fresh = _snapshot_with_windows(
+        "codex",
+        (QuotaWindow("primary", 25, 75, 604_800, now + 100 * 3_600),),
+        observed_at=now - 90,
+    )
+
+    assert assess_capacity(fresh, now=now).age_hours == 0
 
 
 def test_critical_when_a_known_window_is_low_and_resets_far_out() -> None:

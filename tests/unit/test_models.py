@@ -254,3 +254,21 @@ def test_reason_is_only_allowed_for_critical_capacity() -> None:
         ).reason
         == "codex weekly 6% left, resets in 38h"
     )
+
+
+def test_provider_capacity_age_hours_is_optional_and_non_negative() -> None:
+    assert ProviderCapacity(Harness.CODEX, CapacityState.ON_PACE).age_hours is None
+    assert (
+        ProviderCapacity(Harness.CODEX, CapacityState.ON_PACE, age_hours=1.5).age_hours
+        == 1.5
+    )
+
+    with pytest.raises(ValueError, match="age_hours must not be negative"):
+        ProviderCapacity(Harness.CODEX, CapacityState.ON_PACE, age_hours=-0.1)
+
+    with pytest.raises(TypeError, match="age_hours must be numeric"):
+        ProviderCapacity(
+            Harness.CODEX,
+            CapacityState.ON_PACE,
+            age_hours="1",  # type: ignore[arg-type]
+        )

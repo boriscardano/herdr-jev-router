@@ -37,9 +37,9 @@ exhausted provider. See [multi-harness-routing.md](multi-harness-routing.md).
   are opted in can be selected through Jev. A missing or disabled harness is
   forced to `exhausted` before the Jev call.
 - Jev receives the derived 5-hour and weekly remaining quota for every eligible
-  provider. A fresh known window under 10 percent that resets more than 12
-  hours away makes the provider `critical`, and critical providers are removed
-  like exhausted ones unless every remaining provider would be removed.
+  provider. A known window under 10 percent that resets more than 12 hours away
+  makes the provider `critical`, and critical providers are removed like
+  exhausted ones unless every remaining provider would be removed.
 - The caller cannot choose a harness, model, effort, executable, working
   directory, or raw launch argument, and the task text is never parsed for them.
 - Every routing decision is written to the audit before any child starts. A
@@ -114,23 +114,24 @@ way. The state is one of `surplus`, `on_pace`, `conserve`, `unknown`,
 `critical`, or `exhausted`:
 
 - `unknown`: the cache is missing or older than the 6-hour maximum. Jev
-receives `null` for every quota number, never a guess. Unknown providers stay
-eligible with penalty 1.
-- A stale-but-valid cache, older than the provider refresh floor but within the
-6-hour maximum, keeps its pace-based `surplus`/`on_pace`/`conserve` state, but
-its quota numbers are `null` and it is never `critical`. The router does not
-remove a provider on stale data.
+receives `null` for every quota number and `null` for the age, never a guess.
+Unknown providers stay eligible with penalty 1.
+- Any unexpired cache is used, fresh or stale. Codex is refreshed every few
+minutes and skips a refresh while the cache is under five minutes old, so it is
+often stale at routing time; a weekly window cannot recover that fast. The
+existing `fresh`/`stale` label is still reported, and every provider carries
+`age_hours`, the rounded cache age (`null` when there is no usable cache).
 - `exhausted`: a valid zero-remaining window or an explicit reached signal.
 Exhausted providers are always removed before Jev.
-- `critical`: a known fresh window has under 10 percent remaining and resets
-more than 12 hours from now. Critical providers are removed before Jev exactly
-like exhausted ones. When removing them would leave no provider at all, they
-stay eligible with penalty 2, so the user always has a route.
+- `critical`: a known window, fresh or stale, has under 10 percent remaining and
+resets more than 12 hours from now. Critical providers are removed before Jev
+exactly like exhausted ones. When removing them would leave no provider at all,
+they stay eligible with penalty 2, so the user always has a route.
 - `surplus`, `on_pace`, `conserve`: the existing pace comparison against the
 remaining fraction of each window.
 
 For every eligible provider, the Jev state carries `state`, `penalty`,
-`five_hour_remaining_percent`, `five_hour_resets_in_hours`,
+`age_hours`, `five_hour_remaining_percent`, `five_hour_resets_in_hours`,
 `weekly_remaining_percent`, and `weekly_resets_in_hours`. The reset values are
 relative hours, not raw timestamps. The harness question tells Jev to prefer
 the provider with more remaining quota when more than one fits.
@@ -192,7 +193,7 @@ fsynced, append-only JSONL writer:
   "request_id": "0f8c...",
   "timestamp": 1780000000,
   "request": {"role": "reviewer", "constraints": {"read_only": true, "worktree": false, "network_required": false}},
-  "capacity": {"claude": {"state": "on_pace", "penalty": 0, "five_hour_remaining_percent": 85, "five_hour_resets_in_hours": 2, "weekly_remaining_percent": 35, "weekly_resets_in_hours": 100, "reason": null}, "codex": {"state": "critical", "penalty": 0, "five_hour_remaining_percent": null, "five_hour_resets_in_hours": null, "weekly_remaining_percent": 6, "weekly_resets_in_hours": 38, "reason": "codex weekly 6% left, resets in 38h"}},
+  "capacity": {"claude": {"state": "on_pace", "penalty": 0, "age_hours": 0.1, "five_hour_remaining_percent": 85, "five_hour_resets_in_hours": 2, "weekly_remaining_percent": 35, "weekly_resets_in_hours": 100, "reason": null}, "codex": {"state": "critical", "penalty": 0, "age_hours": 0.1, "five_hour_remaining_percent": null, "five_hour_resets_in_hours": null, "weekly_remaining_percent": 6, "weekly_resets_in_hours": 38, "reason": "codex weekly 6% left, resets in 38h"}},
   "jev": {"model": "jev-1.13.0", "answers": {"harness": {"label": "codex", "probabilities": {"claude": 0.4, "codex": 0.6}, "confidence": 0.5}}},
   "recommended_decision": {"harness": "codex", "model": "terra", "effort": "high"},
   "error_category": null

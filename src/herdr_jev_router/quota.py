@@ -321,10 +321,11 @@ def classify_capacity(snapshot: QuotaSnapshot | None, *, now: float) -> Capacity
 
 @dataclass(frozen=True, slots=True)
 class CapacityAssessment:
-    """Hold one provider's capacity state, quota numbers, and critical reason."""
+    """Hold one provider's capacity state, quota numbers, age, and reason."""
 
     state: CapacityState
     quota: QuotaDetail
+    age_hours: float | None = None
     reason: str | None = None
 
 
@@ -333,9 +334,12 @@ def assess_capacity(
 ) -> CapacityAssessment:
     """Classify one snapshot and derive its 5-hour and weekly quota numbers.
 
-    A missing, expired, or stale cache yields an honest state with no numbers.
-    Critical is a hard, deterministic rule: a known fresh window under 10%
-    remaining that resets more than 12 hours from now. Exhausted always wins.
+    Any unexpired cache is used, fresh or stale: the collector refreshes Codex
+    every few minutes and skips a refresh under five minutes, so the cache is
+    often stale at routing time while a weekly window cannot recover that fast.
+    A missing or expired cache is `unknown` with no numbers and no age. Critical
+    is a hard, deterministic rule: a known window under 10% remaining that
+    resets more than 12 hours from now. Exhausted always wins.
     """
 
     empty = QuotaDetail()
@@ -347,27 +351,27 @@ def assess_capacity(
     valid_windows = tuple(
         window for window in snapshot.windows if window.resets_at > now
     )
-    fresh = snapshot.freshness == "fresh"
-    quota = _quota_detail(valid_windows, now=now) if fresh else empty
+    quota = _quota_detail(valid_windows, now=now)
+    age_hours = _round_sensibly(age / 3_600)
     if snapshot.reached or any(
         window.remaining_percent == 0 for window in valid_windows
     ):
-        return CapacityAssessment(CapacityState.EXHAUSTED, quota)
+        return CapacityAssessment(CapacityState.EXHAUSTED, quota, age_hours)
     if not valid_windows:
-        return CapacityAssessment(CapacityState.UNKNOWN, empty)
-    if fresh:
-        critical_windows = tuple(
-            window
-            for window in valid_windows
-            if window.remaining_percent < CRITICAL_REMAINING_PERCENT
-            and window.resets_at - now > CRITICAL_RESET_HOURS * 3_600
+        return CapacityAssessment(CapacityState.UNKNOWN, empty, age_hours)
+    critical_windows = tuple(
+        window
+        for window in valid_windows
+        if window.remaining_percent < CRITICAL_REMAINING_PERCENT
+        and window.resets_at - now > CRITICAL_RESET_HOURS * 3_600
+    )
+    if critical_windows:
+        return CapacityAssessment(
+            CapacityState.CRITICAL,
+            quota,
+            age_hours,
+            _critical_reason(snapshot.provider, critical_windows, now=now),
         )
-        if critical_windows:
-            return CapacityAssessment(
-                CapacityState.CRITICAL,
-                quota,
-                _critical_reason(snapshot.provider, critical_windows, now=now),
-            )
 
     expected = tuple(
         max(
@@ -380,13 +384,13 @@ def assess_capacity(
         window.remaining_percent < pace
         for window, pace in zip(valid_windows, expected, strict=True)
     ):
-        return CapacityAssessment(CapacityState.CONSERVE, quota)
+        return CapacityAssessment(CapacityState.CONSERVE, quota, age_hours)
     if all(
         window.remaining_percent >= pace + 20
         for window, pace in zip(valid_windows, expected, strict=True)
     ):
-        return CapacityAssessment(CapacityState.SURPLUS, quota)
-    return CapacityAssessment(CapacityState.ON_PACE, quota)
+        return CapacityAssessment(CapacityState.SURPLUS, quota, age_hours)
+    return CapacityAssessment(CapacityState.ON_PACE, quota, age_hours)
 
 
 def _quota_detail(windows: tuple[QuotaWindow, ...], *, now: float) -> QuotaDetail:

@@ -999,6 +999,7 @@ def test_explain_removes_critical_codex_and_sends_claude_numbers_to_jev(
     assert capacity["claude"] == {
         "state": "conserve",
         "penalty": 0,
+        "age_hours": 0,
         "five_hour_remaining_percent": 85,
         "five_hour_resets_in_hours": 2,
         "weekly_remaining_percent": 35,
@@ -1011,6 +1012,7 @@ def test_explain_removes_critical_codex_and_sends_claude_numbers_to_jev(
     assert record["capacity"]["codex"] == {
         "state": "critical",
         "penalty": 0,
+        "age_hours": 0,
         "five_hour_remaining_percent": None,
         "five_hour_resets_in_hours": None,
         "weekly_remaining_percent": 6,
@@ -1101,7 +1103,7 @@ def test_explain_keeps_the_only_critical_provider_with_a_penalty(
     assert record["capacity"]["claude"]["state"] == "exhausted"
 
 
-def test_usage_does_not_call_a_stale_near_empty_window_critical(
+def test_usage_calls_a_stale_near_empty_window_critical_with_the_reason(
     tmp_path: Path,
 ) -> None:
     state = tmp_path / "state"
@@ -1112,7 +1114,7 @@ def test_usage_does_not_call_a_stale_near_empty_window_critical(
             source="codex_app_server",
             observed_at=1_000,
             captured_at=1_000,
-            windows=(QuotaWindow("primary", 94, 6, 604_800, 1_000 + 38 * 3_600),),
+            windows=(QuotaWindow("primary", 94, 6, 604_800, 1_400 + 38 * 3_600),),
         ),
     )
     stdout = io.StringIO()
@@ -1128,14 +1130,15 @@ def test_usage_does_not_call_a_stale_near_empty_window_critical(
     assert code == 0
     data = json.loads(stdout.getvalue())
     assert data["codex"]["freshness"] == "stale"
-    assert data["codex"]["state"] != "critical"
-    assert data["codex"]["reason"] is None
+    assert data["codex"]["state"] == "critical"
+    assert data["codex"]["reason"] == "codex weekly 6% left, resets in 38h"
 
 
-def test_explain_keeps_a_stale_near_empty_provider_eligible(tmp_path: Path) -> None:
+def test_explain_removes_a_stale_near_empty_provider(tmp_path: Path) -> None:
     state = tmp_path / "state"
     # Codex was observed at 600 and the test clock is 1000, so it is stale
-    # (refresh floor 300) but still within the 6-hour maximum.
+    # (refresh floor 300) but still within the 6-hour maximum. A stale weekly
+    # window at 6% is still critical and must be removed.
     write_cache(
         state / "codex-quota.json",
         QuotaSnapshot(
@@ -1143,7 +1146,7 @@ def test_explain_keeps_a_stale_near_empty_provider_eligible(tmp_path: Path) -> N
             source="codex_app_server",
             observed_at=600,
             captured_at=600,
-            windows=(QuotaWindow("primary", 94, 6, 604_800, 600 + 38 * 3_600),),
+            windows=(QuotaWindow("primary", 94, 6, 604_800, 1_000 + 38 * 3_600),),
         ),
     )
     write_cache(
@@ -1160,9 +1163,9 @@ def test_explain_keeps_a_stale_near_empty_provider_eligible(tmp_path: Path) -> N
 
     def handler(request: Request):
         payloads.append(json.loads(request.content))
-        return _quota_response(("claude", "codex"))
+        return _quota_response(("claude",))
 
-    code, _ = invoke_explain(
+    code, output = invoke_explain(
         tmp_path,
         partial(route_with_jev, transport=MockTransport(handler)),
         command_finder=_advisory_commands,
@@ -1170,6 +1173,12 @@ def test_explain_keeps_a_stale_near_empty_provider_eligible(tmp_path: Path) -> N
 
     assert code == 0
     capacity = payloads[0]["state"]["capacity"]
-    assert set(capacity) == {"claude", "codex"}
-    assert capacity["codex"]["state"] != "critical"
-    assert capacity["codex"]["weekly_remaining_percent"] is None
+    assert set(capacity) == {"claude"}
+    assert capacity["claude"]["age_hours"] == 0
+    assert "capacity codex: critical (codex weekly 6% left, resets in 38h)" in output
+    record = json.loads(
+        (tmp_path / "audit.jsonl").read_text(encoding="utf-8").splitlines()[-1]
+    )
+    assert record["capacity"]["codex"]["state"] == "critical"
+    assert record["capacity"]["codex"]["age_hours"] == 0.1
+    assert record["capacity"]["codex"]["weekly_remaining_percent"] == 6

@@ -46,11 +46,14 @@ enabled.
 `state` may be a string, JSON object, or array. For the router it is a small
 JSON object containing the delegated task, role, normalized constraints, and
 normalized provider capacity. Each eligible provider entry carries `state`,
-`penalty`, and the four quota numbers `five_hour_remaining_percent`,
-`five_hour_resets_in_hours`, `weekly_remaining_percent`, and
-`weekly_resets_in_hours`. A number is `null` when that window is unknown or
-stale; reset values are hours from now, never raw timestamps. Do not include
-credentials, raw quota timestamps, or unrelated repository content.
+`penalty`, `age_hours`, and the four quota numbers
+`five_hour_remaining_percent`, `five_hour_resets_in_hours`,
+`weekly_remaining_percent`, and `weekly_resets_in_hours`. `age_hours` is the
+rounded age of the cache and is `null` when there is no usable cache. A quota
+number is `null` when that window is missing or the cache is expired; reset
+values are hours from now, never raw timestamps. Any unexpired cache is used,
+fresh or stale, because a quota window cannot recover between refreshes. Do not
+include credentials, raw quota timestamps, or unrelated repository content.
 
 Each question has a map key chosen by the caller, a typed question object,
 `instructions`, and, for `Choice`, a required criteria map. Instructions and
@@ -127,6 +130,7 @@ response = await client.system_one(
             "claude": {
                 "state": "conserve",
                 "penalty": 0,
+                "age_hours": 0.1,
                 "five_hour_remaining_percent": 85,
                 "five_hour_resets_in_hours": 2,
                 "weekly_remaining_percent": 35,

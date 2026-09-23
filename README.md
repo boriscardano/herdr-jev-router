@@ -128,18 +128,20 @@ timer.
 herdr-jev-quota-codex --state-dir ~/.local/state/herdr-jev-router
 ```
 
-Missing or stale quota is `unknown`, never exhausted. See
+Missing or expired quota is `unknown`, never exhausted. See
 [docs/quota-sources.md](docs/quota-sources.md) for the field rules and the
 freshness limits.
 
 Jev receives the real numbers, not just a label: for every eligible provider it
 gets the remaining percent and hours-to-reset for the 5-hour and weekly
-windows, mapped by window length so Claude and Codex both work. A provider with
-under 10 percent left in a window that resets more than 12 hours away is
-`critical` and is removed before Jev like an exhausted one, unless it is the
-only provider left, in which case it stays eligible with a penalty. `usage`,
-`explain`, and `doctor --human` show `critical` with the reason, and the audit
-record keeps the same numbers.
+windows, mapped by window length so Claude and Codex both work, plus
+`age_hours`, the rounded age of the cache. Any unexpired cache is used even
+when it is labeled stale, because a weekly window cannot recover between
+refreshes. A provider with under 10 percent left in a window that resets more
+than 12 hours away is `critical` and is removed before Jev like an exhausted
+one, unless it is the only provider left, in which case it stays eligible with
+a penalty. `usage`, `explain`, and `doctor --human` show `critical` with the
+reason, and the audit record keeps the same numbers.
 
 ## Use
 

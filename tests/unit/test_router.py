@@ -322,6 +322,7 @@ def _audited_capacity(capacity: ProviderCapacity) -> dict[str, object]:
     return {
         "state": capacity.state.value,
         "penalty": capacity.penalty,
+        "age_hours": capacity.age_hours,
         "five_hour_remaining_percent": None,
         "five_hour_resets_in_hours": None,
         "weekly_remaining_percent": None,
@@ -505,6 +506,7 @@ def test_audit_records_the_same_quota_numbers_sent_to_jev(tmp_path: Path) -> Non
     assert capacity["claude"] == {
         "state": "on_pace",
         "penalty": 0,
+        "age_hours": None,
         "five_hour_remaining_percent": 85,
         "five_hour_resets_in_hours": 2,
         "weekly_remaining_percent": 35,
@@ -514,6 +516,7 @@ def test_audit_records_the_same_quota_numbers_sent_to_jev(tmp_path: Path) -> Non
     assert capacity["codex"] == {
         "state": "surplus",
         "penalty": 0,
+        "age_hours": None,
         "five_hour_remaining_percent": None,
         "five_hour_resets_in_hours": None,
         "weekly_remaining_percent": None,
@@ -546,6 +549,7 @@ def test_audit_explains_a_removed_critical_provider(tmp_path: Path) -> None:
     assert audit_record(tmp_path)["capacity"]["codex"] == {
         "state": "critical",
         "penalty": 0,
+        "age_hours": None,
         "five_hour_remaining_percent": None,
         "five_hour_resets_in_hours": None,
         "weekly_remaining_percent": 6,

@@ -167,6 +167,7 @@ def _v2_record(
                 capacity.harness.value: {
                     "state": capacity.state.value,
                     "penalty": capacity.penalty,
+                    "age_hours": capacity.age_hours,
                     **capacity.quota.to_dict(),
                     "reason": capacity.reason,
                 }

@@ -200,6 +200,7 @@ async def route_with_jev(
             capacity.harness.value: {
                 "state": capacity.state.value,
                 "penalty": capacity.penalty,
+                "age_hours": capacity.age_hours,
                 **capacity.quota.to_dict(),
             }
             for capacity in eligible_capacities

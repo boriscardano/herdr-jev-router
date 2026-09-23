@@ -935,6 +935,7 @@ def _capacity_snapshot(
             ),
             assessment.quota if harness in enabled else QuotaDetail(),
             assessment.reason if harness in enabled else None,
+            assessment.age_hours if harness in enabled else None,
         )
         for harness, assessment in assessments.items()
     )
