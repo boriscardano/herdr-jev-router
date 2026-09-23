@@ -154,10 +154,38 @@ def test_one_system_one_call_contains_six_typed_questions() -> None:
             "network_required": False,
         },
         "capacity": {
-            "claude": {"state": "on_pace", "penalty": 0},
-            "codex": {"state": "surplus", "penalty": 0},
-            "opencode": {"state": "on_pace", "penalty": 0},
-            "pi": {"state": "on_pace", "penalty": 0},
+            "claude": {
+                "state": "on_pace",
+                "penalty": 0,
+                "five_hour_remaining_percent": None,
+                "five_hour_resets_in_hours": None,
+                "weekly_remaining_percent": None,
+                "weekly_resets_in_hours": None,
+            },
+            "codex": {
+                "state": "surplus",
+                "penalty": 0,
+                "five_hour_remaining_percent": None,
+                "five_hour_resets_in_hours": None,
+                "weekly_remaining_percent": None,
+                "weekly_resets_in_hours": None,
+            },
+            "opencode": {
+                "state": "on_pace",
+                "penalty": 0,
+                "five_hour_remaining_percent": None,
+                "five_hour_resets_in_hours": None,
+                "weekly_remaining_percent": None,
+                "weekly_resets_in_hours": None,
+            },
+            "pi": {
+                "state": "on_pace",
+                "penalty": 0,
+                "five_hour_remaining_percent": None,
+                "five_hour_resets_in_hours": None,
+                "weekly_remaining_percent": None,
+                "weekly_resets_in_hours": None,
+            },
         },
     }
     assert payload["questions"]["claude_model"]["instructions"].startswith(
@@ -587,3 +615,123 @@ def test_malformed_typed_answer_or_probability_map_fails_closed(case: str) -> No
         call_with_transport(MockTransport(lambda request: response(body)))
 
     assert error.value.code == "invalid_response"
+
+
+def test_jev_state_carries_window_numbers_and_a_quota_preference() -> None:
+    from herdr_jev_router.models import QuotaDetail
+
+    capacities = (
+        ProviderCapacity(
+            Harness.CLAUDE,
+            CapacityState.ON_PACE,
+            0,
+            QuotaDetail(85, 2, 35, 100),
+        ),
+        ProviderCapacity(Harness.CODEX, CapacityState.SURPLUS),
+        ProviderCapacity(Harness.OPENCODE, CapacityState.ON_PACE),
+        ProviderCapacity(Harness.PI, CapacityState.ON_PACE),
+    )
+    requests: list[Request] = []
+
+    def handler(request: Request) -> Response:
+        requests.append(request)
+        return response(valid_response())
+
+    call_with_transport(MockTransport(handler), capacities=capacities)
+
+    payload = json.loads(requests[0].content)
+    assert payload["state"]["capacity"]["claude"] == {
+        "state": "on_pace",
+        "penalty": 0,
+        "five_hour_remaining_percent": 85,
+        "five_hour_resets_in_hours": 2,
+        "weekly_remaining_percent": 35,
+        "weekly_resets_in_hours": 100,
+    }
+    assert payload["state"]["capacity"]["codex"] == {
+        "state": "surplus",
+        "penalty": 0,
+        "five_hour_remaining_percent": None,
+        "five_hour_resets_in_hours": None,
+        "weekly_remaining_percent": None,
+        "weekly_resets_in_hours": None,
+    }
+    assert "remaining quota" in payload["questions"]["harness"]["instructions"]
+
+
+def test_jev_removes_a_critical_provider_when_an_alternative_remains() -> None:
+    from herdr_jev_router.models import QuotaDetail
+
+    body = valid_response()
+    answers = body["answers"]
+    assert isinstance(answers, dict)
+    harness = answers["harness"]
+    assert isinstance(harness, dict)
+    harness["choice"] = "claude"
+    harness["probabilities"] = {"claude": 1.0}
+    capacities = (
+        ProviderCapacity(Harness.CLAUDE, CapacityState.ON_PACE),
+        ProviderCapacity(
+            Harness.CODEX,
+            CapacityState.CRITICAL,
+            0,
+            QuotaDetail(None, None, 6, 38),
+            "codex weekly 6% left, resets in 38h",
+        ),
+    )
+    requests: list[Request] = []
+
+    def handler(request: Request) -> Response:
+        requests.append(request)
+        return response(body)
+
+    call_with_transport(MockTransport(handler), capacities=capacities)
+
+    payload = json.loads(requests[0].content)
+    assert payload["questions"]["harness"]["criteria"] == {"claude": "Claude Code"}
+    assert set(payload["state"]["capacity"]) == {"claude"}
+
+
+def test_jev_offers_the_only_critical_provider_with_a_penalty() -> None:
+    from herdr_jev_router.models import QuotaDetail
+    from herdr_jev_router.policy import (
+        CRITICAL_CAPACITY_PENALTY,
+        apply_critical_fallback,
+    )
+
+    body = valid_response()
+    answers = body["answers"]
+    assert isinstance(answers, dict)
+    harness = answers["harness"]
+    assert isinstance(harness, dict)
+    harness["probabilities"] = {"codex": 1.0}
+    capacities = apply_critical_fallback(
+        (
+            ProviderCapacity(
+                Harness.CODEX,
+                CapacityState.CRITICAL,
+                0,
+                QuotaDetail(None, None, 6, 38),
+                "codex weekly 6% left, resets in 38h",
+            ),
+            ProviderCapacity(Harness.CLAUDE, CapacityState.EXHAUSTED),
+        )
+    )
+    requests: list[Request] = []
+
+    def handler(request: Request) -> Response:
+        requests.append(request)
+        return response(body)
+
+    call_with_transport(MockTransport(handler), capacities=capacities)
+
+    payload = json.loads(requests[0].content)
+    assert payload["questions"]["harness"]["criteria"] == {"codex": "Codex"}
+    assert payload["state"]["capacity"]["codex"] == {
+        "state": "critical",
+        "penalty": CRITICAL_CAPACITY_PENALTY,
+        "five_hour_remaining_percent": None,
+        "five_hour_resets_in_hours": None,
+        "weekly_remaining_percent": 6,
+        "weekly_resets_in_hours": 38,
+    }

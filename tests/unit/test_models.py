@@ -39,6 +39,7 @@ def test_closed_routing_values_match_the_launch_contract() -> None:
         "on_pace",
         "conserve",
         "unknown",
+        "critical",
         "exhausted",
     }
 
@@ -95,7 +96,9 @@ def test_unknown_capacity_requires_a_positive_penalty() -> None:
 
 
 def test_known_capacity_rejects_a_penalty() -> None:
-    with pytest.raises(ValueError, match="only unknown capacity may have a penalty"):
+    with pytest.raises(
+        ValueError, match="only unknown or critical capacity may have a penalty"
+    ):
         ProviderCapacity(
             harness=Harness.CLAUDE,
             state=CapacityState.SURPLUS,

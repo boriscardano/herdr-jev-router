@@ -24,7 +24,8 @@ from typesafe_sdk import (
     TypeSafeUnprocessableEntityError,
 )
 
-from herdr_jev_router.models import CapacityState, ProviderCapacity
+from herdr_jev_router.models import ProviderCapacity
+from herdr_jev_router.policy import route_eligible
 
 _MODEL = "jev-latest"
 # Pin the TypeSafe endpoint so TYPESAFE_BASE_URL cannot redirect the key to a
@@ -151,11 +152,7 @@ async def route_with_jev(
         capacities_snapshot
     ):
         raise JevError("invalid_capacity", "Jev capacity contains a duplicate harness")
-    eligible_capacities = tuple(
-        capacity
-        for capacity in capacities_snapshot
-        if capacity.state is not CapacityState.EXHAUSTED
-    )
+    eligible_capacities = route_eligible(capacities_snapshot)
     if not eligible_capacities:
         raise JevError("no_eligible_provider", "Jev has no eligible provider")
 
@@ -165,7 +162,11 @@ async def route_with_jev(
     }
     questions = {
         "harness": Choice(
-            instructions="Which harness is the better fit for this delegated task?",
+            instructions=(
+                "Which harness is the better fit for this delegated task? When "
+                "more than one harness fits, prefer the provider with more "
+                "remaining quota."
+            ),
             criteria=harness_criteria,
         ),
         "claude_model": Choice(
@@ -199,6 +200,7 @@ async def route_with_jev(
             capacity.harness.value: {
                 "state": capacity.state.value,
                 "penalty": capacity.penalty,
+                **capacity.quota.to_dict(),
             }
             for capacity in eligible_capacities
         },

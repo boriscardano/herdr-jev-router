@@ -1,6 +1,7 @@
 """Apply deterministic policy to typed routing values."""
 
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from enum import StrEnum
 from typing import TypeVar
 
@@ -19,6 +20,9 @@ from herdr_jev_router.models import (
 )
 
 UNKNOWN_CAPACITY_PENALTY = 1
+# Critical providers stay eligible only as a last resort. The penalty is
+# deterministic so Jev prefers any non-critical provider when one exists.
+CRITICAL_CAPACITY_PENALTY = 2
 
 _ANSWER_NAMES = frozenset(
     {
@@ -47,6 +51,54 @@ class RoutingPolicyError(ValueError):
         super().__init__(message)
 
 
+def apply_critical_fallback(
+    capacities: Sequence[ProviderCapacity],
+) -> tuple[ProviderCapacity, ...]:
+    """Attach the critical fallback penalty when every remaining provider is critical.
+
+    A critical provider is normally removed, exactly like an exhausted one. When
+    removing every critical provider would leave no route at all, the critical
+    providers stay eligible and carry a deterministic penalty instead.
+    """
+
+    usable = tuple(
+        capacity
+        for capacity in capacities
+        if capacity.state is not CapacityState.EXHAUSTED
+    )
+    if not usable or not all(
+        capacity.state is CapacityState.CRITICAL for capacity in usable
+    ):
+        return tuple(capacities)
+    return tuple(
+        replace(capacity, penalty=CRITICAL_CAPACITY_PENALTY)
+        if capacity.state is CapacityState.CRITICAL
+        else capacity
+        for capacity in capacities
+    )
+
+
+def route_eligible(
+    capacities: Sequence[ProviderCapacity],
+) -> tuple[ProviderCapacity, ...]:
+    """Return the providers that may reach Jev after the critical fallback.
+
+    Exhausted providers are always removed. Critical providers are removed when
+    at least one non-critical provider remains, and kept when every remaining
+    provider is critical so the user is never left without a route.
+    """
+
+    usable = tuple(
+        capacity
+        for capacity in capacities
+        if capacity.state is not CapacityState.EXHAUSTED
+    )
+    preferred = tuple(
+        capacity for capacity in usable if capacity.state is not CapacityState.CRITICAL
+    )
+    return preferred if preferred else usable
+
+
 def validate_decision(
     answers: Mapping[str, object],
     capacities: Sequence[ProviderCapacity],
@@ -65,12 +117,8 @@ def validate_decision(
     pi_model = _choice(answers["pi_model"], PiModel)
     effort = _choice(answers["effort"], Effort)
 
-    capacity_by_harness = _capacity_by_harness(capacities)
-    eligible = {
-        harness
-        for harness, capacity in capacity_by_harness.items()
-        if capacity.state is not CapacityState.EXHAUSTED
-    }
+    _capacity_by_harness(capacities)
+    eligible = {capacity.harness for capacity in route_eligible(capacities)}
     if harness not in eligible:
         raise RoutingPolicyError(
             "ineligible_harness", "selected harness is not eligible"

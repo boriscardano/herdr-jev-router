@@ -483,6 +483,7 @@ def test_usage_reports_normalized_current_provider_capacity(tmp_path: Path) -> N
     assert json.loads(stdout.getvalue()) == {
         "claude": {
             "state": "conserve",
+            "reason": None,
             "freshness": "fresh",
             "source": "claude_status_line",
             "detected": True,
@@ -490,6 +491,7 @@ def test_usage_reports_normalized_current_provider_capacity(tmp_path: Path) -> N
         },
         "codex": {
             "state": "surplus",
+            "reason": None,
             "freshness": "fresh",
             "source": "codex_app_server",
             "detected": True,
@@ -497,6 +499,7 @@ def test_usage_reports_normalized_current_provider_capacity(tmp_path: Path) -> N
         },
         "opencode": {
             "state": "unknown",
+            "reason": None,
             "freshness": None,
             "source": None,
             "detected": True,
@@ -504,6 +507,7 @@ def test_usage_reports_normalized_current_provider_capacity(tmp_path: Path) -> N
         },
         "pi": {
             "state": "unknown",
+            "reason": None,
             "freshness": None,
             "source": None,
             "detected": True,
@@ -532,6 +536,7 @@ def test_usage_reports_missing_or_invalid_cache_as_unknown(tmp_path: Path) -> No
     assert json.loads(stdout.getvalue()) == {
         "claude": {
             "state": "unknown",
+            "reason": None,
             "freshness": None,
             "source": None,
             "detected": True,
@@ -539,6 +544,7 @@ def test_usage_reports_missing_or_invalid_cache_as_unknown(tmp_path: Path) -> No
         },
         "codex": {
             "state": "unknown",
+            "reason": None,
             "freshness": None,
             "source": None,
             "detected": True,
@@ -546,6 +552,7 @@ def test_usage_reports_missing_or_invalid_cache_as_unknown(tmp_path: Path) -> No
         },
         "opencode": {
             "state": "unknown",
+            "reason": None,
             "freshness": None,
             "source": None,
             "detected": True,
@@ -553,6 +560,7 @@ def test_usage_reports_missing_or_invalid_cache_as_unknown(tmp_path: Path) -> No
         },
         "pi": {
             "state": "unknown",
+            "reason": None,
             "freshness": None,
             "source": None,
             "detected": True,
@@ -594,6 +602,7 @@ def test_doctor_validates_credentials_permissions_files_and_commands(
         "providers": {
             "claude": {
                 "state": "unknown",
+                "reason": None,
                 "freshness": None,
                 "source": None,
                 "detected": True,
@@ -601,6 +610,7 @@ def test_doctor_validates_credentials_permissions_files_and_commands(
             },
             "codex": {
                 "state": "unknown",
+                "reason": None,
                 "freshness": None,
                 "source": None,
                 "detected": True,
@@ -608,6 +618,7 @@ def test_doctor_validates_credentials_permissions_files_and_commands(
             },
             "opencode": {
                 "state": "unknown",
+                "reason": None,
                 "freshness": None,
                 "source": None,
                 "detected": True,
@@ -615,6 +626,7 @@ def test_doctor_validates_credentials_permissions_files_and_commands(
             },
             "pi": {
                 "state": "unknown",
+                "reason": None,
                 "freshness": None,
                 "source": None,
                 "detected": True,
@@ -872,3 +884,184 @@ def test_default_state_directory_uses_configured_environment(tmp_path: Path) -> 
     assert code == 0
     assert calls
     assert (configured / "routing.jsonl").is_file()
+
+
+def _quota_response(harnesses: tuple[str, ...], selected: str = "claude"):
+    from httpx2 import Response
+
+    return Response(
+        200,
+        headers={"content-type": "application/json"},
+        json={
+            "model": "jev-test-1",
+            "answers": {
+                "harness": {
+                    "type": "choice",
+                    "choice": selected,
+                    "probabilities": {
+                        name: (1.0 if name == selected else 0.0) for name in harnesses
+                    },
+                    "confidence": 1.0,
+                },
+                "claude_model": {
+                    "type": "choice",
+                    "choice": "sonnet",
+                    "probabilities": {"haiku": 0.2, "sonnet": 0.6, "opus": 0.2},
+                    "confidence": 0.4,
+                },
+                "codex_model": {
+                    "type": "choice",
+                    "choice": "terra",
+                    "probabilities": {"luna": 0.2, "terra": 0.7, "sol": 0.1},
+                    "confidence": 0.5,
+                },
+                "opencode_model": {
+                    "type": "choice",
+                    "choice": "deepseek",
+                    "probabilities": {"deepseek": 0.6, "glm": 0.3, "kimi": 0.1},
+                    "confidence": 0.5,
+                },
+                "pi_model": {
+                    "type": "choice",
+                    "choice": "deepseek",
+                    "probabilities": {"deepseek": 0.6, "glm": 0.3, "kimi": 0.1},
+                    "confidence": 0.5,
+                },
+                "effort": {
+                    "type": "choice",
+                    "choice": "high",
+                    "probabilities": {
+                        "low": 0.05,
+                        "medium": 0.15,
+                        "high": 0.6,
+                        "xhigh": 0.15,
+                        "max": 0.05,
+                    },
+                    "confidence": 0.5,
+                },
+            },
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        },
+    )
+
+
+def _claude_and_critical_codex(state: Path, *, now: float = 1_000) -> None:
+    write_cache(
+        state / "claude-quota.json",
+        QuotaSnapshot(
+            provider="claude",
+            source="claude_status_line",
+            observed_at=now,
+            captured_at=now,
+            windows=(
+                QuotaWindow("five_hour", 15, 85, 18_000, now + 2 * 3_600),
+                QuotaWindow("seven_day", 65, 35, 604_800, now + 100 * 3_600),
+            ),
+        ),
+    )
+    write_cache(
+        state / "codex-quota.json",
+        QuotaSnapshot(
+            provider="codex",
+            source="codex_app_server",
+            observed_at=now,
+            captured_at=now,
+            windows=(QuotaWindow("primary", 94, 6, 604_800, now + 38 * 3_600),),
+        ),
+    )
+
+
+def _advisory_commands(name: str) -> str | None:
+    return f"/usr/bin/{name}" if name in {"herdr", "claude", "codex"} else None
+
+
+def test_explain_removes_critical_codex_and_sends_claude_numbers_to_jev(
+    tmp_path: Path,
+) -> None:
+    from functools import partial
+
+    from httpx2 import MockTransport, Request
+
+    from herdr_jev_router.jev import route_with_jev
+
+    state = tmp_path / "state"
+    _claude_and_critical_codex(state)
+    payloads: list[dict[str, object]] = []
+
+    def handler(request: Request):
+        payloads.append(json.loads(request.content))
+        return _quota_response(("claude",))
+
+    code, output = invoke_explain(
+        tmp_path,
+        partial(route_with_jev, transport=MockTransport(handler)),
+        command_finder=_advisory_commands,
+    )
+
+    assert code == 0
+    assert len(payloads) == 1
+    capacity = payloads[0]["state"]["capacity"]
+    assert set(capacity) == {"claude"}
+    assert capacity["claude"] == {
+        "state": "conserve",
+        "penalty": 0,
+        "five_hour_remaining_percent": 85,
+        "five_hour_resets_in_hours": 2,
+        "weekly_remaining_percent": 35,
+        "weekly_resets_in_hours": 100,
+    }
+    assert "capacity codex: critical (codex weekly 6% left, resets in 38h)" in output
+    record = json.loads(
+        (tmp_path / "audit.jsonl").read_text(encoding="utf-8").splitlines()[-1]
+    )
+    assert record["capacity"]["codex"] == {
+        "state": "critical",
+        "penalty": 0,
+        "five_hour_remaining_percent": None,
+        "five_hour_resets_in_hours": None,
+        "weekly_remaining_percent": 6,
+        "weekly_resets_in_hours": 38,
+        "reason": "codex weekly 6% left, resets in 38h",
+    }
+    assert record["capacity"]["claude"]["five_hour_remaining_percent"] == 85
+    assert record["capacity"]["claude"]["weekly_remaining_percent"] == 35
+
+
+def test_usage_reports_critical_with_the_reason(tmp_path: Path) -> None:
+    state = tmp_path / "state"
+    _claude_and_critical_codex(state)
+    stdout = io.StringIO()
+
+    code = main(
+        ["usage", "--state-dir", str(state)],
+        stdout=stdout,
+        environ={},
+        clock=lambda: 1_000.0,
+        command_finder=_advisory_commands,
+    )
+
+    assert code == 0
+    data = json.loads(stdout.getvalue())
+    assert data["codex"]["state"] == "critical"
+    assert data["codex"]["reason"] == "codex weekly 6% left, resets in 38h"
+    assert data["claude"]["reason"] is None
+
+
+def test_doctor_human_reports_critical_with_the_reason(tmp_path: Path) -> None:
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    _claude_and_critical_codex(state)
+    stdout = io.StringIO()
+
+    code = main(
+        ["doctor", "--human", "--state-dir", str(state)],
+        stdout=stdout,
+        environ={"TYPESAFE_API_KEY": "test-key"},
+        command_finder=_advisory_commands,
+        clock=lambda: 1_000.0,
+    )
+
+    assert code == 0
+    assert "quota codex: critical (codex weekly 6% left, resets in 38h)" in (
+        stdout.getvalue()
+    )
