@@ -175,14 +175,17 @@ mkdir -p ~/.claude/skills/herdr-jev-router
 cp /path/to/checkout/skills/herdr-jev-router/SKILL.md ~/.claude/skills/herdr-jev-router/SKILL.md
 ```
 
-Then add one line to the master agent's standing instructions, in `CLAUDE.md`
-or `AGENTS.md`:
+Installing the skill alone was not enough in testing: a master agent given a
+plain request to parallelize work used its own built-in subagents and never
+called Jev. The one-line standing instruction below is required. Add it to the
+master agent's standing instructions, in `CLAUDE.md` or `AGENTS.md`:
 
-> When you delegate work to child agents in Herdr, spawn them through
-> `herdr-jev-router`.
+> When you delegate work to child agents in Herdr, spawn them through herdr-jev-router (use the herdr-jev-router skill), not built-in subagents and not `herdr agent start`.
 
-That is enough for the master to call `herdr-jev-router spawn` with no wrapper
-and no key in its own environment: the router reads the owner-only key file.
+With that line in place the master loaded the skill on its own and routed every
+child through the router. That is enough for the master to call
+`herdr-jev-router spawn` with no wrapper and no key in its own environment: the
+router reads the owner-only key file.
 
 ## OpenCode and Pi
 
@@ -200,6 +203,18 @@ Without the variable the harness is unavailable. A malformed value fails
 closed with `invalid_harness_configuration`. See
 [docs/multi-harness-routing.md](docs/multi-harness-routing.md) for the tier
 mapping.
+
+## Troubleshooting
+
+A harness's own interactive startup screen, such as an update available prompt,
+a new-model announcement, or a folder trust question, blocks automatic task
+delivery. The task text lands in that screen instead of the agent prompt. Start
+that harness once by hand in the same directory to clear the screen, then retry
+the spawn.
+
+`spawn` still reports `started` in this case, because Herdr saw the harness as
+ready before the screen appeared. A `started` line is not proof that the child
+received the task. Read the pane with `herdr agent read NAME` to confirm.
 
 ## Links
 
