@@ -38,7 +38,7 @@ from a local checkout:
 
 ```console
 uv tool install git+https://github.com/boriscardano/herdr-jev-router
-uv tool install git+https://github.com/boriscardano/herdr-jev-router@v0.1.3
+uv tool install git+https://github.com/boriscardano/herdr-jev-router@v0.1.4
 uv tool install /path/to/this/checkout
 ```
 

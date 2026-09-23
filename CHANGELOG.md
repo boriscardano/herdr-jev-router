@@ -7,16 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-09-23
+
+### Added
+
+- `explain --show-request` prints the exact JSON the router sends to Jev,
+  before the review lines: the `state` object and all six questions with their
+  instructions and criteria ([#12](https://github.com/boriscardano/herdr-jev-router/pull/12)).
+- A plain-text preferences file at
+  `$XDG_CONFIG_HOME/herdr-jev-router/preferences.md` (default
+  `~/.config/herdr-jev-router/preferences.md`) is sent to Jev verbatim as
+  `state.preferences`. When it is missing, a built-in default prefers the
+  cheapest capable model, avoids a provider whose quota is nearly used up, and
+  reserves higher effort for hard tasks. The file must be owned by you, is read
+  without following symlinks, and is capped at 8 KiB; an unsafe or oversized
+  file fails with `invalid_preferences`. The audit records only the source and
+  length, never the text.
+
+### Changed
+
+- Jev now decides the route. Every installed and enabled harness reaches Jev
+  with its real quota numbers, including `critical`, `exhausted` and `unknown`
+  ones. Every quota-based removal and penalty is gone, and `no_eligible_provider`
+  now means only that no harness is installed and enabled. Code filters only
+  what cannot run here: a missing executable, or OpenCode/Pi without its opt-in
+  configuration.
+
 ### Fixed
 
 - Rounded Jev probabilities no longer fail a spawn. Jev rounds each answer's
   probabilities to two decimals, so a valid three-option answer can sum to
   0.99 or 1.01. The router now accepts a sum within the two-decimal rounding
   bound of `0.005 * options`, while a genuinely different distribution such as
-  0.8 or 1.2 is still rejected.
+  0.8 or 1.2 is still rejected
+  ([#11](https://github.com/boriscardano/herdr-jev-router/pull/11)).
 - A failed Jev call now records Jev's stable error code in the audit record as
   `jev_error_code`, so a recurring failure is diagnosable from the record
-  alone. The raw message and response body are still never audited.
+  alone. The raw message and response body are still never audited
+  ([#11](https://github.com/boriscardano/herdr-jev-router/pull/11)).
 
 ## [0.1.3] - 2026-09-23
 
@@ -117,7 +145,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Herdr CLI output is discarded or bounded, the pane split reply is size
   checked, and a closed stdout pipe is handled without a traceback.
 
-[Unreleased]: https://github.com/boriscardano/herdr-jev-router/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/boriscardano/herdr-jev-router/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/boriscardano/herdr-jev-router/releases/tag/v0.1.4
 [0.1.3]: https://github.com/boriscardano/herdr-jev-router/releases/tag/v0.1.3
 [0.1.2]: https://github.com/boriscardano/herdr-jev-router/releases/tag/v0.1.2
 [0.1.1]: https://github.com/boriscardano/herdr-jev-router/releases/tag/v0.1.1
