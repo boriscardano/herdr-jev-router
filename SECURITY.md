@@ -26,9 +26,10 @@ through a private channel before disclosing details publicly.
   stock Herdr resolves the selected harness executable through the pane's
   `PATH`. If an attacker can change `PATH` or place a binary earlier in it,
   they can control what runs. Run the router from a trusted environment.
-- `TYPESAFE_API_KEY` is read from the router's environment. Do not export it
-  from a shell startup file, because that exposes it to commands and agents in
-  that shell.
+- The Jev key is read from `TYPESAFE_API_KEY` when it is set, otherwise from
+  the owner-only key file `$XDG_CONFIG_HOME/herdr-jev-router/key`. Do not export
+  the variable from a shell startup file, because that exposes it to commands
+  and agents in that shell.
 
 ## Security boundary
 
@@ -45,8 +46,18 @@ harnesses installed on `PATH` and enabled can be selected, and OpenCode and Pi
 require opt-in configuration. See
 [docs/multi-harness-routing.md](docs/multi-harness-routing.md).
 
-The router reads `TYPESAFE_API_KEY` from its own environment and removes it from
-the environment it passes to the Herdr CLI. The router never writes the key,
+The router reads the Jev key from `TYPESAFE_API_KEY` or, when that is unset,
+from the key file at `$XDG_CONFIG_HOME/herdr-jev-router/key`
+(`~/.config/herdr-jev-router/key` by default). It accepts the file only when it
+is a regular file owned by the current user with mode 0600, opened with
+`O_NOFOLLOW` and verified with `fstat`, inside a parent directory owned by the
+current user that is not group- or world-writable. It rejects symlinks, foreign
+owners, other modes, oversized files, and non-UTF-8 content, and it treats any
+such file exactly like a missing key: `configuration_failed`, with no child
+started. The key is never printed, logged, written to the audit, placed in
+argv, or passed to the Herdr CLI. The router removes `TYPESAFE_API_KEY` from
+the environment it passes to the Herdr CLI, and the Herdr CLI never reads the
+key file. The router never writes the key,
 authorization headers, raw provider responses, session identifiers, transcript
 paths, working directories, prompts, responses, or repository paths to its
 state or audit files.

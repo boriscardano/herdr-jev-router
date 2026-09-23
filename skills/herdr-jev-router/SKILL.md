@@ -29,15 +29,15 @@ herdr-jev-router spawn "TASK TEXT" --name NAME [--pane PANE_ID]
 ```
 
 `spawn` is installed with `uv tool install /path/to/this/checkout`. It accepts no
-harness, model, effort or raw launch flag, and it never reads one out of the task text.
-`TYPESAFE_API_KEY` must be set, and the router strips it from the environment it hands
-to `herdr`. If the user installed a key wrapper such as the `jev` example in the README,
-call that wrapper instead of `herdr-jev-router`, and never read, print or export the key
-yourself. Claude Code and Codex are enabled whenever their executable is on `PATH`.
+harness, model, effort or raw launch flag, and it never reads one out of the task
+text. Call `herdr-jev-router spawn` directly. The router reads the key from
+`TYPESAFE_API_KEY` or the owner-only key file and never prints it. A wrapper is
+optional: if the user installed one, call it. Never read, print or export the key
+yourself. The router strips the key from the environment it hands to `herdr`.
+Claude Code and Codex are enabled whenever their executable is on `PATH`.
 OpenCode and Pi are used only when the user opted in with `HERDR_JEV_ROUTER_OPENCODE` or
 `HERDR_JEV_ROUTER_PI` and the executable is on `PATH`. On success `spawn` prints one
-line such as `started harness=codex model=terra effort=high pane=w1:p2 name=worker`. Run
-`herdr-jev-router doctor --human` for a first-run check of the install.
+line such as `started harness=codex model=terra effort=high pane=w1:p2 name=worker`. Run `herdr-jev-router doctor --human` for a first-run check.
 
 ## 3. Preview a choice with explain
 
@@ -52,7 +52,7 @@ herdr-jev-router explain "TASK TEXT" [--role worker|reviewer|debugger|researcher
 
 It prints the recommended harness, the selected model, the effort and one
 capacity line per harness, such as `capacity pi: not enabled (set
-HERDR_JEV_ROUTER_PI)`. Set `TYPESAFE_API_KEY` first.
+HERDR_JEV_ROUTER_PI)`. The router needs a key from the environment or the key file.
 
 ## 4. Follow the child
 
@@ -81,4 +81,4 @@ A failure prints one JSON denial on stdout with `version`, `request_id` and
 | `routing_failed` | 1 | An unexpected internal error. Nothing started. Report it with the `request_id`. |
 | `invalid_request` | 2 | Fix the arguments. A task with a C0 or C1 control character other than a newline or tab is rejected here. Nothing started. |
 | `invalid_harness_configuration` | 2 | Fix the opt-in variable value, then retry. Nothing started. |
-| `configuration_failed` | 2 | Set `TYPESAFE_API_KEY`, or install `herdr` for `spawn`. |
+| `configuration_failed` | 2 | Provide a key (environment or owner-only key file), or install `herdr` for `spawn`. |

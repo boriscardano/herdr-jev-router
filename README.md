@@ -43,11 +43,30 @@ uv tool install /path/to/this/checkout
 
 ## Provide the key safely
 
-`spawn`, `explain`, `usage`, and `doctor` read `TYPESAFE_API_KEY` from the
-environment they run in. Do not export it from `.zshrc`, `.bashrc`, or another
-shell startup file, because that exposes it to every command and agent in that
-shell. Give every caller one small wrapper on `PATH`, for example
-`~/.local/bin/jev`, so the key exists only in the wrapper's process:
+`spawn`, `explain`, and `doctor` read the key from
+`TYPESAFE_API_KEY` when it is set, and otherwise from the owner-only key file
+`$XDG_CONFIG_HOME/herdr-jev-router/key` (`~/.config/herdr-jev-router/key` when
+`XDG_CONFIG_HOME` is unset). Write the file once, reading the key from your
+Keychain or 1Password so it never lands in your shell history:
+
+```console
+mkdir -p ~/.config/herdr-jev-router
+install -m 600 /dev/null ~/.config/herdr-jev-router/key
+security find-generic-password -s typesafe -w > ~/.config/herdr-jev-router/key
+# or: op read 'op://private/typesafe/credential' > ~/.config/herdr-jev-router/key
+```
+
+The file stays owner-only: the router accepts it only when it is a regular file
+owned by you with mode 0600, inside a directory you own that is not group- or
+world-writable. An unsafe or empty file fails closed exactly like a missing
+key, and the key never appears in output, audit records, or a child process
+environment. Do not export it from `.zshrc`, `.bashrc`, or another shell
+startup file, because that exposes it to every command and agent in that shell.
+`doctor --human` reports whether a key was found and whether it came from the
+environment or the key file, never the value.
+
+An optional wrapper on `PATH` keeps the key in one process instead of a file,
+for example `~/.local/bin/jev`:
 
 ```sh
 #!/bin/sh
@@ -59,10 +78,8 @@ key=$(cat ~/.config/herdr-jev-router.key)
 TYPESAFE_API_KEY=$key exec herdr-jev-router "$@"
 ```
 
-Make it executable with `chmod 700 ~/.local/bin/jev`. Pick one source. The
-Keychain and 1Password forms are the safest, and the file form expects the key
-alone in an owner-only file with mode 0600. Then run `jev doctor --human`, and
-have agents call `jev spawn ...` instead of `herdr-jev-router spawn ...`.
+Make it executable with `chmod 700 ~/.local/bin/jev`. With a wrapper, agents
+call `jev spawn ...` instead of `herdr-jev-router spawn ...`.
 
 ## First run
 
@@ -147,7 +164,7 @@ task may contain newline and tab, but any other C0 or C1 control character is
 rejected with `invalid_request`. See [docs/advisory-mode.md](docs/advisory-mode.md) for
 the failure codes and limits.
 
-## Teach your agents
+## Make your master agent use it
 
 The CLI install does not install the agent skill. Copy
 `skills/herdr-jev-router/SKILL.md` into your agent's skills directory, for
@@ -157,6 +174,15 @@ example Claude Code's `~/.claude/skills/herdr-jev-router/SKILL.md`.
 mkdir -p ~/.claude/skills/herdr-jev-router
 cp /path/to/checkout/skills/herdr-jev-router/SKILL.md ~/.claude/skills/herdr-jev-router/SKILL.md
 ```
+
+Then add one line to the master agent's standing instructions, in `CLAUDE.md`
+or `AGENTS.md`:
+
+> When you delegate work to child agents in Herdr, spawn them through
+> `herdr-jev-router`.
+
+That is enough for the master to call `herdr-jev-router spawn` with no wrapper
+and no key in its own environment: the router reads the owner-only key file.
 
 ## OpenCode and Pi
 
