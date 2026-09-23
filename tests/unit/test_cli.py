@@ -304,6 +304,7 @@ def test_explain_rejects_lone_surrogates_in_the_task(tmp_path: Path, task: str) 
         "\u200b",
         "\u200b\u200c\u200d",
         "\u2060",
+        "\ufeff",
         " \u200b\t\u200c ",
     ],
 )
@@ -330,7 +331,7 @@ def test_explain_allows_format_characters_inside_visible_text(tmp_path: Path) ->
         calls += 1
         return jev_result()
 
-    code, output = invoke_explain(tmp_path, fake_jev, task="Fix\u200bthe\u2060test")
+    code, output = invoke_explain(tmp_path, fake_jev, task="\u200bFix the test\u2060")
 
     assert code == 0
     assert "recommended harness:" in output

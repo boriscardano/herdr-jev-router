@@ -694,6 +694,7 @@ def test_spawn_rejects_lone_surrogates_in_name_and_pane(
         "\u200b",
         "\u200b\u200c\u200d",
         "\u2060",
+        "\ufeff",
         " \u200b\t\u200c ",
     ],
 )
@@ -739,7 +740,7 @@ def test_spawn_allows_format_characters_inside_visible_text(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     executable, log = fake_herdr(tmp_path, monkeypatch)
-    task = "Fix\u200bthe\u2060test"
+    task = "\u200bFix the test\u2060"
 
     async def fake_jev(**kwargs: object) -> JevRoutingResult:
         return jev_result()
