@@ -1,0 +1,13 @@
+Herdr Jev Router
+Copyright 2026 Herdr Jev Router contributors
+
+This product is licensed under the Apache License, Version 2.0.
+
+No upstream source code has been copied or materially adapted in this
+foundation release. The quota collector design was informed by
+terry-li-hm/herdr-model-lanes (Apache License 2.0), commit
+8568d996298c2da3495124904bbff4048d443347, at
+https://github.com/terry-li-hm/herdr-model-lanes. That project was used as a
+design reference only, and no code was copied from it. Future adaptations must
+identify the upstream repository, commit, file path, and license here before
+distribution.

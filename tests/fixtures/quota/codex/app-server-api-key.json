@@ -1,0 +1,2 @@
+{"jsonrpc":"2.0","id":2,"result":{"account":{"type":"apiKey"},"requiresOpenaiAuth":true}}
+{"jsonrpc":"2.0","id":3,"result":{"rateLimits":{"primary":{"usedPercent":0,"windowDurationMins":300,"resetsAt":1900000000}}}}

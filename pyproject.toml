@@ -1,0 +1,73 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "herdr-jev-router"
+version = "0.1.0"
+description = "Advisory Jev routing for child-agent spawns on stock Herdr"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "boriscardano" }]
+keywords = [
+  "herdr",
+  "jev",
+  "agent-routing",
+  "multi-agent",
+  "llm",
+  "advisory",
+  "cli",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+  "httpx2>=2.0.0",
+  "typesafe-sdk==0.7.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/boriscardano/herdr-jev-router"
+Repository = "https://github.com/boriscardano/herdr-jev-router"
+Issues = "https://github.com/boriscardano/herdr-jev-router/issues"
+
+[project.scripts]
+herdr-jev-router = "herdr_jev_router.cli:main"
+herdr-jev-quota-claude = "herdr_jev_router.quota_commands:claude_main"
+herdr-jev-quota-codex = "herdr_jev_router.quota_commands:codex_main"
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3",
+  "ruff>=0.11",
+  "ty>=0.0.82",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/herdr_jev_router"]
+
+[tool.pytest.ini_options]
+addopts = ["--strict-config", "--strict-markers", "-ra"]
+testpaths = ["tests"]
+
+[tool.ty.src]
+include = ["src"]
+
+[tool.ruff]
+line-length = 88
+src = ["src", "tests"]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP"]

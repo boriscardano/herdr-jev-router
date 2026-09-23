@@ -1,0 +1,10 @@
+{
+  "rateLimits": {
+    "primary": {"usedPercent": 40, "windowDurationMins": 300, "resetsAt": 1800010000}
+  },
+  "rateLimitsByLimitId": {
+    "opaque-model-bucket": {
+      "primary": {"usedPercent": 0, "windowDurationMins": 30, "resetsAt": 1900000000}
+    }
+  }
+}

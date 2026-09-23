@@ -1,0 +1,5 @@
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1}}
+{"jsonrpc":"2.0","method":"initialized","params":{}}
+{"jsonrpc":"2.0","id":2,"result":{"account":{"type":"chatgpt","email":"SENTINEL_CODEX_EMAIL"},"requiresOpenaiAuth":true}}
+{"jsonrpc":"2.0","method":"account/rateLimits/updated","params":{}}
+{"jsonrpc":"2.0","id":3,"result":{"rateLimits":{"limitId":"codex","planType":"plus","rateLimitReachedType":null,"primary":{"usedPercent":31,"windowDurationMins":10080,"resetsAt":1800250000},"secondary":{"usedPercent":12.5,"windowDurationMins":300,"resetsAt":1800010000}},"rateLimitsByLimitId":{"opaque-model-bucket":{"primary":{"usedPercent":0,"windowDurationMins":30,"resetsAt":1900000000}}}}}

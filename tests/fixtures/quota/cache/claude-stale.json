@@ -1,0 +1,1 @@
+{"schema_version":1,"provider":"claude","source":"claude_status_line","observed_at":1000,"captured_at":1001,"freshness":"fresh","reached":false,"windows":[{"name":"five_hour","used_percent":25,"remaining_percent":75,"window_seconds":18000,"resets_at":19000}]}

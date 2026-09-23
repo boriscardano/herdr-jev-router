@@ -1,0 +1,12 @@
+{
+  "rate_limits": {
+    "five_hour": {"used_percentage": 23.5, "resets_at": 1900000000},
+    "seven_day": {"used_percentage": 41.2, "resets_at": 2000000000},
+    "spend_limit": {"used_percentage": 101, "resets_at": 2100000000}
+  },
+  "session_id": "SENTINEL_SESSION_ID",
+  "access_token": "SENTINEL_ACCESS_TOKEN",
+  "transcript_path": "/SENTINEL_TRANSCRIPT_PATH",
+  "cwd": "/SENTINEL_CWD",
+  "prompt": "SENTINEL_PROMPT"
+}

@@ -1,0 +1,1 @@
+{"schema_version":1,"provider":"codex","source":"codex_app_server","observed_at":1000,"captured_at":1001,"freshness":"fresh","reached":false,"windows":[{"name":"primary","used_percent":25,"remaining_percent":75,"window_seconds":3600,"resets_at":4600}]}
