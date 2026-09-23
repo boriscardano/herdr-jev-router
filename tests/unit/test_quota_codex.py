@@ -112,7 +112,7 @@ for line in sys.stdin:
     request = json.loads(line)
     if request.get("id") == 1:
         assert request.get("params") == {
-            "clientInfo": {"name": "herdr-jev-router", "version": "0.1.0"},
+            "clientInfo": {"name": "herdr-jev-router", "version": "0.1.1"},
             "capabilities": {},
         }
         print(json.dumps({"id": 1, "result": {}}), flush=True)

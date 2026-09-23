@@ -165,7 +165,7 @@ async def _query_app_server(
                     "params": {
                         "clientInfo": {
                             "name": "herdr-jev-router",
-                            "version": "0.1.0",
+                            "version": "0.1.1",
                         },
                         "capabilities": {},
                     },

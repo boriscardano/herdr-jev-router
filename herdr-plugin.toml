@@ -1,6 +1,6 @@
 id = "herdr.jev-router"
 name = "Herdr Jev Router"
-version = "0.1.0"
+version = "0.1.1"
 min_herdr_version = "0.9.1"
 description = "Advisory Jev routing for stock Herdr child-agent spawns."
 platforms = ["linux", "macos"]
