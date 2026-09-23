@@ -27,6 +27,10 @@ from herdr_jev_router.harness import (
 from herdr_jev_router.jev import JevRequest, build_jev_request, route_with_jev
 from herdr_jev_router.models import Effort, Harness, ProviderCapacity
 from herdr_jev_router.policy import RoutingPolicyError, launch_profile
+from herdr_jev_router.preferences import (
+    PreferencesError,
+    resolve_preferences,
+)
 from herdr_jev_router.quota import (
     CapacityAssessment,
     assess_capacity,
@@ -398,6 +402,9 @@ def main(
     except HarnessConfigurationError as error:
         _write_denial(output, request_id, error.code)
         return 2
+    except PreferencesError:
+        _write_denial(output, request_id, PreferencesError.code)
+        return 2
     except (_RequestError, _UsageError):
         _write_denial(output, request_id, "invalid_request")
         return 2
@@ -463,17 +470,25 @@ def _doctor(
     }
     configuration_ok = availability.configuration_error is None
     commands_ok = commands["herdr"] and bool(availability.enabled)
+    preferences = resolve_preferences(environment)
     ok = (
         credential_ok
         and state_ok
         and router_files_ok
         and commands_ok
         and configuration_ok
+        and preferences.problem is None
     )
     return {
         "ok": ok,
         "checks": {
             "credential": credential,
+            "preferences": {
+                "ok": preferences.problem is None,
+                "source": preferences.preferences.source,
+                "length": preferences.preferences.length,
+                "problem": preferences.problem,
+            },
             "state_directory": {"ok": state_ok},
             "router_files": {"ok": router_files_ok, **router_files},
             "providers": _usage(state_dir, now=now, availability=availability),
@@ -507,6 +522,13 @@ def _write_doctor_human(output: TextIO, result: Mapping[str, object]) -> None:
             "TypeSafe key: missing, set TYPESAFE_API_KEY or write the key file "
             "at $XDG_CONFIG_HOME/herdr-jev-router/key"
         )
+    preference_check = checks["preferences"]
+    if preference_check["problem"] is not None:
+        lines.append(f"preferences: {preference_check['problem']}")
+    elif preference_check["source"] == "file":
+        lines.append("preferences: file")
+    else:
+        lines.append("preferences: built-in default")
     if checks["commands"]["herdr"]:
         lines.append("herdr: ok")
     else:
@@ -669,6 +691,9 @@ def _recommend_decision(
     api_key = _resolve_key(environment).key
     if api_key is None:
         raise _ConfigurationError
+    preference_resolution = resolve_preferences(environment)
+    if preference_resolution.problem is not None:
+        raise PreferencesError(preference_resolution.problem)
     capacities = _capacity_snapshot_for(state_dir, clock, enabled=availability.enabled)
 
     async def configured_jev(**kwargs: object) -> object:
@@ -682,6 +707,7 @@ def _recommend_decision(
             constraints=constraints,
             capacities=capacities,
             audit_path=audit_path or state_dir / "routing.jsonl",
+            preferences=preference_resolution.preferences,
             jev_callable=configured_jev,
             clock=clock,
         )

@@ -19,6 +19,7 @@ from herdr_jev_router.models import (
     QuotaDetail,
     RoutingDecision,
 )
+from herdr_jev_router.preferences import DEFAULT_PREFERENCES, Preferences
 from herdr_jev_router.router import RouterError, recommend
 
 
@@ -184,6 +185,7 @@ def test_recommend_calls_jev_once_and_persists_audit_before_returning(
             "network_required": False,
         },
         "capacities": capacities(),
+        "preferences": DEFAULT_PREFERENCES,
     }
     assert result.recommended == RoutingDecision(
         Harness.CODEX,
@@ -208,6 +210,10 @@ def test_recommend_calls_jev_once_and_persists_audit_before_returning(
                 "worktree": False,
                 "network_required": False,
             },
+        },
+        "preferences": {
+            "source": "default",
+            "length": len(DEFAULT_PREFERENCES),
         },
         "capacity": {
             "claude": _audited_capacity(
@@ -422,6 +428,29 @@ def test_jev_failure_is_audited_without_raw_exception_data(tmp_path: Path) -> No
     assert '"error_category": "jev"' in serialized
     assert record["jev_error_code"] == "connection"
     assert "secret provider body" not in serialized
+
+
+def test_audit_records_preferences_source_and_length_but_not_text(
+    tmp_path: Path,
+) -> None:
+    text = "Always try Pi first with deepseek-v4.1-flash."
+    captured: list[dict[str, object]] = []
+
+    async def fake_jev(**kwargs: object) -> JevRoutingResult:
+        captured.append(kwargs)
+        return jev_result()
+
+    run_recommend(
+        tmp_path,
+        fake_jev,
+        preferences=Preferences(text, "file"),
+    )
+
+    # Jev receives the exact text; the audit only records where it came from.
+    assert captured[0]["preferences"] == text
+    record = audit_record(tmp_path)
+    assert record["preferences"] == {"source": "file", "length": len(text)}
+    assert text not in json.dumps(record)
 
 
 def test_non_jev_failure_is_audited_without_a_jev_error_code(tmp_path: Path) -> None:

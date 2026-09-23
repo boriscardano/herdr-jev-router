@@ -12,6 +12,7 @@ import herdr_jev_router.cli as cli_module
 import herdr_jev_router.router as router_module
 from herdr_jev_router.cli import main
 from herdr_jev_router.jev import JevError, JevRoutingResult, route_with_jev
+from herdr_jev_router.preferences import DEFAULT_PREFERENCES
 from herdr_jev_router.quota import QuotaSnapshot, QuotaWindow, write_cache
 
 _OPT_IN_ENVIRONMENT = {
@@ -564,6 +565,110 @@ def test_explain_denies_when_no_harness_is_launchable(tmp_path: Path) -> None:
     assert record["error_category"] == "capacity"
 
 
+def test_explain_sends_the_preferences_file_and_never_audits_it(
+    tmp_path: Path,
+) -> None:
+    text = "Use deepseek-v4.1-flash through Pi as the workhorse."
+    directory = tmp_path / "herdr-jev-router"
+    directory.mkdir(mode=0o755)
+    directory.chmod(0o755)
+    (directory / "preferences.md").write_text(text, encoding="utf-8")
+    payloads: list[dict[str, object]] = []
+
+    def handler(request: Request):
+        payloads.append(json.loads(request.content))
+        return _quota_response(("claude", "codex"), selected="claude")
+
+    code, _ = invoke_explain(
+        tmp_path,
+        partial(route_with_jev, transport=MockTransport(handler)),
+        command_finder=_advisory_commands,
+        environ={
+            "TYPESAFE_API_KEY": "test-key",
+            "XDG_CONFIG_HOME": str(tmp_path),
+        },
+    )
+
+    assert code == 0
+    assert payloads[0]["state"]["preferences"] == text
+    record = json.loads(
+        (tmp_path / "audit.jsonl").read_text(encoding="utf-8").splitlines()[-1]
+    )
+    assert record["preferences"] == {"source": "file", "length": len(text)}
+    assert text not in json.dumps(record)
+
+
+def test_explain_denies_an_unsafe_preferences_file_with_a_stable_code(
+    tmp_path: Path,
+) -> None:
+    directory = tmp_path / "herdr-jev-router"
+    directory.mkdir(mode=0o755)
+    directory.chmod(0o755)
+    (directory / "preferences.md").symlink_to(tmp_path / "missing-target")
+    called = False
+
+    async def fake_jev(**kwargs: object) -> JevRoutingResult:
+        nonlocal called
+        called = True
+        return jev_result()
+
+    code, output = invoke_explain(
+        tmp_path,
+        fake_jev,
+        environ={
+            "TYPESAFE_API_KEY": "test-key",
+            "XDG_CONFIG_HOME": str(tmp_path),
+        },
+    )
+
+    assert code == 2
+    assert json.loads(output)["denial"]["code"] == "invalid_preferences"
+    assert called is False
+
+
+def test_doctor_human_reports_the_preferences_in_use(tmp_path: Path) -> None:
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    directory = tmp_path / "herdr-jev-router"
+    directory.mkdir(mode=0o755)
+    directory.chmod(0o755)
+    (directory / "preferences.md").write_text("steer", encoding="utf-8")
+    stdout = io.StringIO()
+
+    code = main(
+        ["doctor", "--human", "--state-dir", str(state)],
+        stdout=stdout,
+        environ={
+            "TYPESAFE_API_KEY": "test-key",
+            "XDG_CONFIG_HOME": str(tmp_path),
+        },
+        command_finder=all_commands,
+        clock=lambda: 1_000.0,
+    )
+
+    assert code == 0
+    assert "preferences: file" in stdout.getvalue()
+
+
+def test_doctor_human_reports_the_built_in_default_preferences(
+    tmp_path: Path,
+) -> None:
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    stdout = io.StringIO()
+
+    code = main(
+        ["doctor", "--human", "--state-dir", str(state)],
+        stdout=stdout,
+        environ={"TYPESAFE_API_KEY": "test-key", "XDG_CONFIG_HOME": str(tmp_path)},
+        command_finder=all_commands,
+        clock=lambda: 1_000.0,
+    )
+
+    assert code == 0
+    assert "preferences: built-in default" in stdout.getvalue()
+
+
 def test_usage_reports_normalized_current_provider_capacity(tmp_path: Path) -> None:
     state = tmp_path / "state"
     cache(
@@ -703,6 +808,12 @@ def test_doctor_validates_credentials_permissions_files_and_commands(
     assert result["ok"] is True
     assert result["checks"] == {
         "credential": {"ok": True, "source": "environment"},
+        "preferences": {
+            "ok": True,
+            "source": "default",
+            "length": len(DEFAULT_PREFERENCES),
+            "problem": None,
+        },
         "state_directory": {"ok": True},
         "router_files": {
             "ok": True,

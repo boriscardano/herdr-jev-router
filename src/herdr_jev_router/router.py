@@ -19,6 +19,7 @@ from herdr_jev_router.models import (
     RoutingDecision,
 )
 from herdr_jev_router.policy import RoutingPolicyError, validate_decision
+from herdr_jev_router.preferences import Preferences, default_preferences
 
 _ANSWER_NAMES = (
     "harness",
@@ -65,12 +66,16 @@ async def recommend(
     constraints: Mapping[str, object],
     capacities: Sequence[ProviderCapacity],
     audit_path: Path,
+    preferences: Preferences | None = None,
     jev_callable: JevCallable = route_with_jev,
     clock: Clock = time,
 ) -> RecommendationResult:
     """Call Jev once and durably return the validated recommendation."""
 
     constraints_snapshot = dict(constraints)
+    effective_preferences = (
+        default_preferences() if preferences is None else preferences
+    )
     # The caller already removed harnesses that cannot be launched. Jev decides
     # among everything else, whatever the quota says.
     capacities_snapshot = tuple(capacities)
@@ -81,6 +86,7 @@ async def recommend(
         role=role,
         constraints=constraints_snapshot,
         capacities=capacities_snapshot,
+        preferences=effective_preferences,
     )
     if not capacities_snapshot:
         record["error_category"] = "capacity"
@@ -92,6 +98,7 @@ async def recommend(
             role=role,
             constraints=constraints_snapshot,
             capacities=capacities_snapshot,
+            preferences=effective_preferences.text,
         )
     except Exception as error:
         record["error_category"] = "jev"
@@ -154,6 +161,7 @@ def _v2_record(
     role: str,
     constraints: Mapping[str, object],
     capacities: Sequence[ProviderCapacity],
+    preferences: Preferences,
 ) -> dict[str, object]:
     record = _base_record(
         timestamp=timestamp,
@@ -166,6 +174,11 @@ def _v2_record(
             "schema_version": 2,
             "phase": phase,
             "request_id": request_id,
+            # Only the source and the length are audited, never the text.
+            "preferences": {
+                "source": preferences.source,
+                "length": preferences.length,
+            },
             "capacity": {
                 capacity.harness.value: {
                     "state": capacity.state.value,

@@ -16,6 +16,7 @@ from herdr_jev_router.models import (
     QuotaDetail,
 )
 from herdr_jev_router.policy import validate_decision
+from herdr_jev_router.preferences import DEFAULT_PREFERENCES
 
 
 def valid_response() -> dict[str, object]:
@@ -186,6 +187,7 @@ def test_one_system_one_call_contains_six_typed_questions() -> None:
             "worktree": False,
             "network_required": False,
         },
+        "preferences": DEFAULT_PREFERENCES,
         "capacity": {
             "claude": {
                 "state": "on_pace",
@@ -280,6 +282,42 @@ def test_missing_answer_fails_closed() -> None:
         call_with_transport(MockTransport(lambda request: response(body)))
 
     assert error.value.code == "invalid_response"
+
+
+def test_preferences_are_sent_verbatim_with_a_pointer_in_instructions() -> None:
+    requests: list[Request] = []
+
+    def handler(request: Request) -> Response:
+        requests.append(request)
+        return response(valid_response())
+
+    call_with_transport(
+        MockTransport(handler),
+        preferences="Use deepseek-v4.1-flash through Pi as the workhorse.",
+    )
+
+    payload = json.loads(requests[0].content)
+    assert (
+        payload["state"]["preferences"]
+        == "Use deepseek-v4.1-flash through Pi as the workhorse."
+    )
+    pointer = "Follow the user's preferences in the state."
+    assert payload["questions"]["harness"]["instructions"].endswith(pointer)
+    assert payload["questions"]["effort"]["instructions"].endswith(pointer)
+    assert pointer not in payload["questions"]["codex_model"]["instructions"]
+
+
+def test_missing_preferences_send_the_built_in_default() -> None:
+    requests: list[Request] = []
+
+    def handler(request: Request) -> Response:
+        requests.append(request)
+        return response(valid_response())
+
+    call_with_transport(MockTransport(handler))
+
+    payload = json.loads(requests[0].content)
+    assert payload["state"]["preferences"] == DEFAULT_PREFERENCES
 
 
 def test_harness_question_offers_every_launchable_provider() -> None:

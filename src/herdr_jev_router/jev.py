@@ -25,6 +25,7 @@ from typesafe_sdk import (
 )
 
 from herdr_jev_router.models import ProviderCapacity
+from herdr_jev_router.preferences import DEFAULT_PREFERENCES
 
 _MODEL = "jev-latest"
 # Pin the TypeSafe endpoint so TYPESAFE_BASE_URL cannot redirect the key to a
@@ -65,6 +66,9 @@ _HARNESS_DESCRIPTIONS = {
     "pi": "Pi",
 }
 _CONSTRAINT_NAMES = frozenset({"read_only", "worktree", "network_required"})
+# Point Jev at the preferences instead of restating them here, so the user's
+# text stays the single source of steering.
+_PREFERENCES_POINTER = "Follow the user's preferences in the state."
 # Jev rounds each probability to two decimals, so every option can miss its
 # true value by up to 0.005 and an n-option sum by up to 0.005 * n. Accepting
 # that bound keeps rounded answers valid without accepting a genuinely
@@ -141,6 +145,7 @@ def build_jev_request(
     role: str,
     constraints: Mapping[str, object],
     capacities: Sequence[ProviderCapacity],
+    preferences: str = DEFAULT_PREFERENCES,
 ) -> JevRequest:
     """Build the exact state and six Choice questions for one Jev call."""
 
@@ -167,7 +172,10 @@ def build_jev_request(
     }
     questions: dict[str, Choice] = {
         "harness": Choice(
-            instructions=("Which harness is the better fit for this delegated task?"),
+            instructions=(
+                "Which harness is the better fit for this delegated task? "
+                f"{_PREFERENCES_POINTER}"
+            ),
             criteria=harness_criteria,
         ),
         "claude_model": Choice(
@@ -189,7 +197,10 @@ def build_jev_request(
             criteria=_PI_CRITERIA,
         ),
         "effort": Choice(
-            instructions="Which reasoning effort is appropriate for this task?",
+            instructions=(
+                "Which reasoning effort is appropriate for this task? "
+                f"{_PREFERENCES_POINTER}"
+            ),
             criteria=_EFFORT_CRITERIA,
         ),
     }
@@ -197,6 +208,7 @@ def build_jev_request(
         "task": task,
         "role": role,
         "constraints": constraints_snapshot,
+        "preferences": preferences,
         "capacity": {
             capacity.harness.value: {
                 "state": capacity.state.value,
@@ -215,6 +227,7 @@ async def route_with_jev(
     role: str,
     constraints: Mapping[str, object],
     capacities: Sequence[ProviderCapacity],
+    preferences: str = DEFAULT_PREFERENCES,
     api_key: str | None = None,
     transport: AsyncBaseTransport | None = None,
     timeout: float = 20.0,
@@ -235,6 +248,7 @@ async def route_with_jev(
         role=role,
         constraints=constraints,
         capacities=capacities,
+        preferences=preferences,
     )
 
     try:
