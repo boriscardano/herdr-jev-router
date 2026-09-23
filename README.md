@@ -141,8 +141,8 @@ herdr-jev-router explain 'Review the authentication redesign.' --role reviewer
 ```
 
 `spawn` never accepts a harness, model, effort, or raw launch argument. The
-task may contain newline and tab, but any other control character is rejected
-with `invalid_request`. See [docs/advisory-mode.md](docs/advisory-mode.md) for
+task may contain newline and tab, but any other C0 or C1 control character is
+rejected with `invalid_request`. See [docs/advisory-mode.md](docs/advisory-mode.md) for
 the failure codes and limits.
 
 ## Teach your agents
