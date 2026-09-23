@@ -209,8 +209,8 @@ mapping.
 A harness's own interactive startup screen, such as an update available prompt,
 a new-model announcement, or a folder trust question, blocks automatic task
 delivery. The task text lands in that screen instead of the agent prompt. Start
-that harness once by hand in the same directory to clear the screen, then retry
-the spawn.
+that harness once by hand in the same directory, the way you normally start it,
+clear the screen, then retry the spawn.
 
 `spawn` still reports `started` in this case, because Herdr saw the harness as
 ready before the screen appeared. A `started` line is not proof that the child
