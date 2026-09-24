@@ -3,13 +3,20 @@
 Herdr Jev Router is a Python extension that routes child-agent spawning through
 Jev on stock, unpatched Herdr. It is advisory and cannot enforce routing.
 
+## Testing
+
+- Never write unit tests after the code. If a component must be tested in isolation, FIRST write down every way it could fail, THEN write the code.
+- Prefer end-to-end tests as the only testing mechanism, and use them to prove complex features work. Every E2E run ends by producing a verifiable, repeatable artifact (a report, screenshot, log or output file that can be regenerated and checked).
+- For E2E verification, do not pick the simplest scenario that could pass. Pick a medium-to-hard one.
+- Tautological tests (they restate the implementation or only exercise their own mocks) and change-detector tests (they fail on any refactor with no behavior change) are harmful. Do not write them. When adding tests, check that none are tautological or self-testing.
+- Do not add a regression test for a bug fix unless it closes a real gap in behavior testing.
+
 ## Development method
 
-- Use TDD, test-driven development, for every production behavior.
+- When a behavior must be tested in isolation, use TDD, test-driven development, after listing how it could fail (see Testing).
 - Start with a focused failing test and confirm it fails for the expected reason.
 - Implement the smallest change that makes the test pass.
 - Refactor only while the focused test and full suite remain green.
-- Begin every bug fix with a regression test.
 - Test failure paths and prohibited behavior explicitly.
 - Run `uv run pytest` before committing production changes.
 - Use `ruff` for linting and formatting.
